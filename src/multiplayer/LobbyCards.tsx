@@ -56,6 +56,11 @@ export interface GameSummary {
   /** A solo game (worker/solo.js), and whether its clock is paused. */
   solo?: boolean;
   paused?: boolean;
+  /** A lobby the idle cull closed (worker/cull.js): 15 days untouched. It
+   *  files with the finished games, cannot be entered, and its time is updated_at. */
+  closed?: 'idle' | null;
+  /** A game the idle cull ended: no winner. */
+  abandoned?: boolean;
 }
 
 // ---------- words ----------
@@ -127,7 +132,9 @@ export function StatusChip({ g }: { g: GameSummary }) {
       ? t('card.status.full')
       : g.phase === 'live'
         ? t('card.status.live', { n: g.current_tick ?? 0 })
-        : t('card.status.finished');
+        : g.closed ? t('card.status.closed')
+          : g.abandoned ? t('card.status.endedIdle')
+            : t('card.status.finished');
   return (
     <span className={`lx-chip lx-chip--${g.phase}`}>
       <span className="lx-chip__dot" aria-hidden />
@@ -198,12 +205,17 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
   const sub = g.phase === 'live'
     ? `${t('card.started', { when: ago(g.started_at, now) })}${g.paused ? ` · ${t('card.paused')}`
       : g.next_tick_at ? ` · ${t('card.nextTurn', { when: until(g.next_tick_at, now) })}` : ''}`
+    : g.closed
+      ? t('card.closed', { when: ago(g.updated_at, now) })
     : g.phase === 'finished'
       ? t('card.ended', { when: ago(g.completed_at, now), n: g.current_tick ?? 0 })
       : t('card.hosted', { host: iHost ? t('card.hostedYou') : g.host_name, when: ago(g.created_at, now) });
 
   let cta: { label: string; kind: 'primary' | 'secondary' | 'disabled' } ;
-  if (variant === 'mine') {
+  if (g.closed) {
+    // Nothing to enter: say so, quietly, instead of a button that goes nowhere.
+    cta = { label: t('card.cta.closed'), kind: 'disabled' };
+  } else if (variant === 'mine') {
     cta = g.phase === 'live' ? { label: t('card.cta.resume'), kind: 'primary' }
       : g.phase === 'finished' ? { label: t('card.cta.view'), kind: 'secondary' }
       // This OPENS the room (onPrimary = enter it); START is inside, so the
@@ -263,6 +275,8 @@ export function GameCard({ g, now, variant, busy, onPrimary, menu, pinned, myUse
             {g.leader.name} · {worldsWord(g.leader.worlds)}
           </span>
         )}
+        {g.closed && <span className="lx-fact">{t('card.fact.closedIdle')}</span>}
+        {g.abandoned && !g.winner && <span className="lx-fact">{t('card.victory.abandoned')}</span>}
         {g.phase === 'finished' && g.winner && (
           <span className="lx-fact">
             <span className="lx-fact__k">{t('card.fact.winner')}</span>

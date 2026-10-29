@@ -1356,6 +1356,16 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'kaiju_revealed':
     case 'kaiju_charging':
       return { category: 'THREAT', level: 'WARN' };
+    // The Three Body event (worker/invasion.js): a threat to everyone.
+    case 'invasion_launched':
+    case 'invasion_gate':
+    case 'invasion_assault':
+    case 'invasion_world_taken':
+    case 'invasion_earth_taken':
+      return { category: 'THREAT', level: 'WARN' };
+    case 'invasion_done':
+    case 'invasion_repelled':
+      return { category: 'SYSTEM', level: 'WARN' };
     case 'kaiju_leaving':
     case 'kaiju_gone':
     case 'kaiju_dead':
@@ -1390,6 +1400,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'senate_law_expired':
     case 'senate_reaped':
     case 'victory':
+    case 'game_abandoned':
       return { category: 'SYSTEM', level: 'INFO' };
     // A standing route dying is a WARN, not an INFO: every reason it can
     // end (war, piracy, an empty treasury, a partner pulling out) is
@@ -3064,7 +3075,8 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   }
 
   const gameOver = meta?.status === 'completed';
-  const iWon = gameOver && meta?.winnerFactionId === meta?.myFactionId;
+  // null === null is not a win: an observer, or a game nobody won.
+  const iWon = gameOver && meta?.winnerFactionId != null && meta.winnerFactionId === meta.myFactionId;
 
   // Pass caller's capital body id so the canvas auto-pans there on
   // first load instead of staring at Sol.

@@ -2369,7 +2369,7 @@ async function handleResearch(req, env, ctx) {
            VALUES (?, ?, ?, 'tech_advanced', ?, ?, 'public', ?)`,
         )
         .bind(
-          `c${tick}_tech_${me.id.slice(-6)}_${techId}_l${curLevel + 1}`,
+          `c${tick}_tech_${me.id}_${techId}_l${curLevel + 1}`,
           gameId, tick, me.id,
           JSON.stringify({
             tech_id: techId,
@@ -8002,7 +8002,7 @@ async function handleDetonateShip(req, env, ctx) {
                 (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
             )
-            .bind(`c_det_cap_${dead.slice(-10)}_${tick}`, gameId, tick,
+            .bind(`c_det_cap_${dead}_${tick}`, gameId, tick,
                   fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
                   fate.captain.faction_id, ship.parent_body_id,
                   JSON.stringify({

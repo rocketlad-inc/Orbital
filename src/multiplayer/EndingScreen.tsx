@@ -84,7 +84,9 @@ export function EndingScreen({ gameId, meta, onReturn }: EndingScreenProps) {
     try { return !!localStorage.getItem(endgameKey(gameId)); } catch { return false; }
   });
   const sellable = canBuyHere();
-  const eligible = !shownBefore && survived && !!user && !user.is_premium;
+  // Never on a game the idle cull ended: no sales pitch on a dead game.
+  const abandoned = (status === 'ready' && data ? data.game.victoryType : meta.victoryType) === 'abandoned';
+  const eligible = !shownBefore && survived && !abandoned && !!user && !user.is_premium;
 
   const onView = useCallback(() => {
     logCommission('endgame', 'view');

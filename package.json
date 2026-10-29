@@ -18,7 +18,7 @@
     "start": "react-scripts start",
     "lint:worker": "eslint worker/ --ext .js && npm run lint:claims",
     "art:version": "node scripts/art-version.js",
-    "build": "npm run lint:worker && node scripts/bundle-migrations.js && node scripts/mirror-shell-css.js && node scripts/globe-pngs.mjs && react-scripts build",
+    "build": "npm run lint:worker && node scripts/bundle-migrations.js && node scripts/mirror-shell-css.js && node scripts/globe-pngs.mjs && react-scripts build && node scripts/prerender-pages.mjs",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "worker:dev": "wrangler dev",
@@ -81,6 +81,7 @@
     "sim:gatepairing": "node sim/gatePairing.mjs",
     "sim:discoveredgate": "node sim/discoveredGate.mjs",
     "sim:sungates": "node sim/sunGates.mjs",
+    "sim:invasion": "node sim/invasion.mjs",
     "sim:sensorstructures": "node sim/sensorStructures.mjs",
     "sim:nullfieldintel": "node sim/nullFieldIntel.mjs",
     "sim:nullfieldstate": "node sim/nullFieldState.mjs",
@@ -92,6 +93,7 @@
     "sim:tenplayers": "node sim/tenPlayers.mjs",
     "sim:discordloc": "esbuild sim/discordLocale.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/discordLocale.mjs && node node_modules/.cache/discordLocale.mjs",
     "sim:email": "esbuild sim/emailQuickJoin.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/emailQuickJoin.mjs && node node_modules/.cache/emailQuickJoin.mjs",
+    "sim:cull": "esbuild sim/cull.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/cull.mjs && node node_modules/.cache/cull.mjs",
     "sim:invites": "esbuild sim/invites.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/invites.mjs && node node_modules/.cache/invites.mjs",
     "sim:visits": "esbuild sim/visits.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/visits.mjs && node node_modules/.cache/visits.mjs",
     "sim:leave": "esbuild sim/lobbyLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/lobbyLeave.mjs && node node_modules/.cache/lobbyLeave.mjs",
@@ -113,7 +115,11 @@
     "sim:tickspeed": "esbuild sim/defaultTickSpeed.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/defaultTickSpeed.mjs && node node_modules/.cache/defaultTickSpeed.mjs",
     "sim:outerswap": "esbuild sim/outerYieldSwap.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/outerYieldSwap.mjs && node node_modules/.cache/outerYieldSwap.mjs",
     "sim:inboundwar": "esbuild sim/inboundWar.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/inboundWar.mjs && node node_modules/.cache/inboundWar.mjs",
-    "sim:ram": "esbuild sim/ramAuthority.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/ramAuthority.mjs && node node_modules/.cache/ramAuthority.mjs"
+    "sim:ram": "esbuild sim/ramAuthority.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/ramAuthority.mjs && node node_modules/.cache/ramAuthority.mjs",
+    "sim:trial-signup": "esbuild sim/trialSignup.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/trialSignup.mjs && node node_modules/.cache/trialSignup.mjs",
+    "sim:trial-leave": "esbuild sim/trialLeave.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/trialLeave.mjs && node node_modules/.cache/trialLeave.mjs",
+    "sim:link-tags": "esbuild sim/linkTags.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --loader:.css=empty --jsx=automatic --log-level=error --outfile=node_modules/.cache/linkTags.mjs && node node_modules/.cache/linkTags.mjs",
+    "sim:cancel-refund": "esbuild sim/cancelRefund.mjs --bundle --platform=node --format=esm --loader:.wasm=empty --log-level=error --outfile=node_modules/.cache/cancelRefund.mjs && node node_modules/.cache/cancelRefund.mjs"
   },
   "eslintConfig": {
     "extends": [

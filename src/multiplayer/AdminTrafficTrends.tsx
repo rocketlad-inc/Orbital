@@ -2,7 +2,7 @@
 // AdminTrafficTrends — link and ad traffic, per source, per day (admin).
 //
 // One line per source the viewer picks (six at most), for one step of
-// the visit funnel: visitors, engaged, pressed Play, started sign-up,
+// the visit funnel: visitors, engaged, pressed Play, trial game, started sign-up,
 // signed up, took a seat. "Share of visitors" divides that step by the
 // same source's visitors that day, so a small link that converts well
 // is not drowned out by a big one that doesn't. Days are UTC; today's
@@ -16,42 +16,78 @@
 //
 // Data: traffic.daily in the admin overview (worker/adminDashboard.js),
 // the same funnel definitions as the traffic tables beside it.
+//
+// The same chart serves the Commission's "Which surface sells" panel: a
+// `config` swaps the funnel steps, the names and the words ("surface",
+// "views"). The first step is always the one a share divides by.
 // ============================================================
 
-import React, { useLayoutEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import './AdminTrafficTrends.css';
+import { isAiSource, AI_GROUP } from './aiSources';
 
 const DAY = 86_400_000;
 
 export type TrafficDay = {
   day_ms: number; source: string;
-  visitors: number; engaged: number; pressed_play: number; started: number; signed_up: number; seated: number;
+  visitors: number; engaged: number; pressed_play: number; tried: number; started: number; signed_up: number; seated: number;
 };
 
-const METRICS = [
-  { key: 'visitors', label: 'Visitors' },
-  { key: 'engaged', label: 'Engaged' },
-  { key: 'pressed_play', label: 'Pressed Play' },
-  { key: 'started', label: 'Started sign-up' },
-  { key: 'signed_up', label: 'Signed up' },
-  { key: 'seated', label: 'Took a seat' },
-] as const;
-type MetricKey = typeof METRICS[number]['key'];
+/** One (UTC day, line) row: the line is a traffic source or a surface. */
+export type TrendRow = { day_ms: number; source: string; [step: string]: number | string };
+type MetricKey = string;
+/** What one chart draws: its steps (the first is the share's base), names and words. */
+export type TrendConfig = {
+  title: string;
+  metrics: ReadonlyArray<{ key: string; label: string }>;
+  name: (s: string) => string;
+  store: string;
+  /** "source" / "sources" */
+  item: [string, string];
+  /** The base step in a sentence: "visitors", "views". */
+  base: string;
+  /** Fold every AI assistant into one line (traffic only). */
+  foldAi?: boolean;
+  /** A line under the chart, after the day note. */
+  note?: string;
+};
+
 const RANGES = [7, 14, 30] as const;
 /** Lines on the chart at once: one per colour (AdminTrafficTrends.css). */
 const SLOTS = 6;
 /** A day with fewer visitors than this from a source has no share: 1 of 1
  *  is "100%" and says nothing. */
 const MIN_FOR_SHARE = 3;
-const STORE = 'ao.trafficTrends.v1';
+const num = (r: TrendRow, k: string) => Number(r[k]) || 0;
 
 const SOURCE_NAME: Record<string, string> = {
-  'reddit-ads': 'Reddit ads', reddit: 'Reddit, untagged', 'chatgpt.com': 'ChatGPT', google: 'Google search',
+  'reddit-ads': 'Reddit ads', reddit: 'Reddit, untagged', direct: 'Typed or bookmarked', 'chatgpt.com': 'ChatGPT', google: 'Google search',
   bing: 'Bing', duckduckgo: 'DuckDuckGo', invite: 'Invite links', 'android-app': 'Android app',
   'discord-replay': 'Discord replay', 'discord-feed': 'Discord game feed', facebook: 'Facebook',
+  [AI_GROUP]: 'AI assistants',
 };
 /** "r-space" → "r/space"; the commonest tags in words; anything else as is. */
 export const sourceName = (s: string) => SOURCE_NAME[s] ?? (s.startsWith('r-') ? `r/${s.slice(2)}` : s);
+
+/** Link and ad traffic: the visit funnel, per source. */
+const TRAFFIC: TrendConfig = {
+  title: 'Per source, per day',
+  metrics: [
+    { key: 'visitors', label: 'Visitors' },
+    { key: 'engaged', label: 'Engaged' },
+    { key: 'pressed_play', label: 'Pressed Play' },
+    { key: 'tried', label: 'Trial game' },
+    { key: 'started', label: 'Started sign-up' },
+    { key: 'signed_up', label: 'Signed up' },
+    { key: 'seated', label: 'Took a seat' },
+  ],
+  name: sourceName,
+  store: 'ao.trafficTrends.v1',
+  item: ['source', 'sources'],
+  base: 'visitors',
+  foldAi: true,
+  note: 'Direct (typed or bookmarked) visits are counted from Oct 26, so earlier days leave them out.',
+};
 
 const nf = new Intl.NumberFormat();
 const dayLabel = (ms: number) =>
@@ -59,14 +95,14 @@ const dayLabel = (ms: number) =>
 const dayLong = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
 
-type Saved = { metric?: MetricKey; share?: boolean; range?: number; picked?: string[]; total?: boolean };
+type Saved = { metric?: MetricKey; share?: boolean; range?: number; picked?: string[]; total?: boolean; auto?: boolean };
 // Per-viewer convenience only: a private window or blocked storage just
 // starts from the defaults.
-function loadSaved(): Saved {
-  try { return JSON.parse(localStorage.getItem(STORE) || '{}') ?? {}; } catch { return {}; }
+function loadSaved(store: string): Saved {
+  try { return JSON.parse(localStorage.getItem(store) || '{}') ?? {}; } catch { return {}; }
 }
-function save(s: Saved) {
-  try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* storage off */ }
+function save(store: string, s: Saved) {
+  try { localStorage.setItem(store, JSON.stringify(s)); } catch { /* storage off */ }
 }
 
 /** A step of 1, 2 or 5 x 10^n, about a quarter of the top value. */
@@ -94,10 +130,29 @@ function useWidth<T extends HTMLElement>(): [(el: T | null) => void, number] {
 type Point = { v: number | null; n: number; of: number };
 type Series = { source: string; slot: number; pts: Point[] };
 
-export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }) {
-  const saved = useMemo(loadSaved, []);
+/** Every AI assistant folded into one source per day (aiSources.js), so
+ *  ChatGPT, Perplexity, Claude... read as one line. Each day's rows still
+ *  add up to the same total. */
+function foldAi(rows: TrendRow[], metrics: TrendConfig['metrics']): TrendRow[] {
+  const out: TrendRow[] = [];
+  const ai = new Map<number, TrendRow>();
+  for (const r of rows) {
+    if (!isAiSource(r.source)) { out.push(r); continue; }
+    const d = ai.get(r.day_ms);
+    if (!d) { ai.set(r.day_ms, { ...r, source: AI_GROUP }); continue; }
+    for (const m of metrics) d[m.key] = num(d, m.key) + num(r, m.key);
+  }
+  return [...out, ...ai.values()].sort((a, b) => a.day_ms - b.day_ms);
+}
+
+export function TrafficTrends({ rows: raw, now, config = TRAFFIC }: { rows: TrendRow[]; now: number; config?: TrendConfig }) {
+  const { metrics: METRICS, name: sourceName, store, item: [one, many], base: baseWord } = config;
+  const BASE = METRICS[0]!.key;
+  const Many = many[0]!.toUpperCase() + many.slice(1);
+  const rows = useMemo(() => (config.foldAi ? foldAi(raw, METRICS) : raw), [raw, config.foldAi, METRICS]);
+  const saved = useMemo(() => loadSaved(store), [store]);
   const [metric, setMetric] = useState<MetricKey>(
-    METRICS.some(m => m.key === saved.metric) ? saved.metric! : 'visitors');
+    METRICS.some(m => m.key === saved.metric) ? saved.metric! : BASE);
   const [share, setShare] = useState(!!saved.share);
   const [range, setRange] = useState<number>(RANGES.includes(saved.range as 7) ? saved.range! : 14);
   const [showTotal, setShowTotal] = useState(!!saved.total);
@@ -110,7 +165,7 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
   // the default pick.
   const allSources = useMemo(() => {
     const t = new Map<string, number>();
-    for (const r of rows) t.set(r.source, (t.get(r.source) ?? 0) + r.visitors);
+    for (const r of rows) t.set(r.source, (t.get(r.source) ?? 0) + num(r, BASE));
     return [...t.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s);
   }, [rows]);
 
@@ -120,11 +175,16 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
     return Array.from({ length: SLOTS }, (_, i) => want[i] ?? null);
   });
   const picked = slots.filter((s): s is string => !!s);
+  // Following the top five until the viewer picks by hand: the data
+  // re-reads every minute, so a new source that climbs into the top five
+  // joins the lines by itself. A choice saved before this existed stays a
+  // hand pick.
+  const [auto, setAuto] = useState(saved.auto ?? saved.picked === undefined);
 
   const persist = (p: Partial<Saved>) =>
-    save({ metric, share, range, total: showTotal, picked, ...p });
+    save(store, { metric, share, range, total: showTotal, picked, auto, ...p });
 
-  const shareOn = share && metric !== 'visitors';
+  const shareOn = share && metric !== BASE;
   const today = Math.floor(now / DAY) * DAY;
   // No invented history: the axis starts where recording did, if later.
   const firstDay = rows.length ? Math.min(...rows.map(r => r.day_ms)) : today;
@@ -136,7 +196,7 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
   }, [start, today]);
 
   const cell = useMemo(() => {
-    const m = new Map<string, TrafficDay>();
+    const m = new Map<string, TrendRow>();
     for (const r of rows) m.set(`${r.source}|${r.day_ms}`, r);
     return m;
   }, [rows]);
@@ -148,20 +208,34 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
     source, slot,
     pts: days.map(d => {
       const r = cell.get(`${source}|${d}`);
-      return point(r ? r[metric] : 0, r ? r.visitors : 0);
+      return point(r ? num(r, metric) : 0, r ? num(r, BASE) : 0);
     }),
   }] : []);
   const total: Point[] = days.map(d => {
     let n = 0, of = 0;
-    for (const r of rows) if (r.day_ms === d) { n += r[metric]; of += r.visitors; }
+    for (const r of rows) if (r.day_ms === d) { n += num(r, metric); of += num(r, BASE); }
     return point(n, of);
   });
 
   // Range totals per source for the chips (always counts: a share summed
   // over days means nothing).
   const rangeTotal = (source: string) =>
-    rows.reduce((s, r) => s + (r.source === source && r.day_ms >= start ? r[metric] : 0), 0);
+    rows.reduce((s, r) => s + (r.source === source && r.day_ms >= start ? num(r, metric) : 0), 0);
   const chipSources = allSources.filter(s => rows.some(r => r.source === s && r.day_ms >= start) || picked.includes(s));
+
+  // The five busiest in view. While following, the lines are these: a
+  // source still in the five keeps its colour, one that fell out frees
+  // its colour for the newcomer.
+  const topKey = chipSources.slice(0, 5).join('|');
+  useEffect(() => {
+    if (!auto) return;
+    const want = topKey ? topKey.split('|') : [];
+    setSlots(prev => {
+      const next = prev.map(s => (s && want.includes(s) ? s : null));
+      for (const s of want) if (!next.includes(s)) next[next.indexOf(null)] = s;
+      return next.every((s, i) => s === prev[i]) ? prev : next;
+    });
+  }, [auto, topKey]);
 
   const toggle = (s: string) => {
     const at = slots.indexOf(s);
@@ -173,17 +247,18 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
       next[free] = s;
     }
     setFull(false);
+    setAuto(false);
     setSlots(next);
-    persist({ picked: next.filter((x): x is string => !!x) });
+    persist({ picked: next.filter((x): x is string => !!x), auto: false });
   };
   const pickTop = () => {
     const next = Array.from({ length: SLOTS }, (_, i) => (i < 5 ? chipSources[i] ?? null : null));
-    setSlots(next); setFull(false);
-    persist({ picked: next.filter((x): x is string => !!x) });
+    setSlots(next); setFull(false); setAuto(true);
+    persist({ picked: next.filter((x): x is string => !!x), auto: true });
   };
   const clear = () => {
-    setSlots(Array.from({ length: SLOTS }, () => null)); setFull(false);
-    persist({ picked: [] });
+    setSlots(Array.from({ length: SLOTS }, () => null)); setFull(false); setAuto(false);
+    persist({ picked: [], auto: false });
   };
 
   const mLabel = METRICS.find(m => m.key === metric)!.label;
@@ -259,7 +334,7 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
   const hovered = hover != null ? days[hover] : undefined;
   const cardRows = hover == null ? [] : [
     ...series.map(s => ({ key: s.source, name: sourceName(s.source), slot: s.slot as number | null, p: s.pts[hover]! })),
-    ...(showTotal ? [{ key: '__total', name: 'All sources', slot: null, p: total[hover]! }] : []),
+    ...(showTotal ? [{ key: '__total', name: `All ${many}`, slot: null, p: total[hover]! }] : []),
   ].sort((a, b) => (b.p.v ?? -1) - (a.p.v ?? -1));
   // The card sits in the half of the plot away from the hovered day, so
   // it never covers the points being read.
@@ -270,9 +345,9 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
   return (
     <div className="tt">
       <div className="tt-head">
-        <h4 className="tt-title">Per source, per day</h4>
+        <h4 className="tt-title">{config.title}</h4>
         <span className="tt-best">
-          {best ? <>Best day: <b>{dayLabel(best.day)}</b>, {sourceName(best.source)}, {fmt(best.p)}{shareOn ? '' : ` ${mLabel.toLowerCase()}`}</> : 'Pick a source below to draw its line.'}
+          {best ? <>Best day: <b>{dayLabel(best.day)}</b>, {sourceName(best.source)}, {fmt(best.p)}{shareOn ? '' : ` ${mLabel.toLowerCase()}`}</> : `Pick a ${one} below to draw its line.`}
         </span>
       </div>
 
@@ -288,9 +363,9 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
           <button type="button" role="radio" aria-checked={!shareOn} className={!shareOn ? 'is-on' : ''}
             onClick={() => { setShare(false); persist({ share: false }); }}>Count</button>
           <button type="button" role="radio" aria-checked={shareOn} className={shareOn ? 'is-on' : ''}
-            disabled={metric === 'visitors'}
-            title={metric === 'visitors' ? 'Pick a later step: visitors as a share of visitors is always 100%' : `${mLabel} as a share of that day's visitors from the same source`}
-            onClick={() => { setShare(true); persist({ share: true }); }}>Share of visitors</button>
+            disabled={metric === BASE}
+            title={metric === BASE ? `Pick a later step: ${baseWord} as a share of ${baseWord} is always 100%` : `${mLabel} as a share of that day's ${baseWord} from the same ${one}`}
+            onClick={() => { setShare(true); persist({ share: true }); }}>Share of {baseWord}</button>
         </div>
         <div className="tt-seg" role="radiogroup" aria-label="Days shown">
           {RANGES.map(r => (
@@ -300,7 +375,7 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
         </div>
       </div>
 
-      <div className="tt-chips" aria-label="Sources">
+      <div className="tt-chips" aria-label={Many}>
         {chipSources.map(s => {
           const slot = slots.indexOf(s);
           return (
@@ -313,20 +388,21 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
         })}
         <button type="button" aria-pressed={showTotal} className={`tt-chip tt-chip--total${showTotal ? ' is-on' : ''}`}
           onClick={() => { setShowTotal(!showTotal); persist({ total: !showTotal }); }}>
-          <i className="tt-sw tt-sw--total" />All sources<span className="tt-chip__n">{nf.format(chipSources.reduce((a, s) => a + rangeTotal(s), 0))}</span>
+          <i className="tt-sw tt-sw--total" />All {many}<span className="tt-chip__n">{nf.format(chipSources.reduce((a, s) => a + rangeTotal(s), 0))}</span>
         </button>
         <span className="tt-quick">
           <button type="button" className="tt-link" onClick={pickTop}>Top 5</button>
           <button type="button" className="tt-link" onClick={clear}>Clear</button>
+          {auto && <span className="tt-auto" title={`The five busiest ${many} are drawn, and a new one joins as soon as it climbs in. Pick or clear a ${one} yourself to stop.`}>following the top 5</span>}
         </span>
       </div>
       {full && <p className="tt-note" role="status">Six lines at most: turn one off first.</p>}
 
       <div className="tt-plot" ref={plotRef} tabIndex={0} onKeyDown={onKey} onBlur={() => setHover(null)}
-        aria-label={`${mLabel}${shareOn ? ' as a share of visitors' : ''} per day by source. Arrow keys step through days.`}>
+        aria-label={`${mLabel}${shareOn ? ` as a share of ${baseWord}` : ''} per day by ${one}. Arrow keys step through days.`}>
         {width > 0 && (
           <svg className="tt-svg" width={width} height={H} role="img"
-            aria-label={`${mLabel}${shareOn ? ' share' : ''} per day, ${picked.map(sourceName).join(', ') || 'no sources picked'}`}>
+            aria-label={`${mLabel}${shareOn ? ' share' : ''} per day, ${picked.map(sourceName).join(', ') || `no ${many} picked`}`}>
             <g className="tt-grid">
               {ticks.map(t => (
                 <g key={t}>
@@ -376,8 +452,8 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
         {hovered != null && (
           <div className="tt-card" style={{ left: Math.max(0, cardLeft) }}>
             <div className="tt-card__day">{dayLong(hovered)}{hover === last ? ' · so far' : ''}</div>
-            <div className="tt-card__what">{mLabel}{shareOn ? ', share of visitors' : ''}</div>
-            {cardRows.length === 0 ? <div className="tt-card__none">No sources picked</div> : cardRows.map(r => (
+            <div className="tt-card__what">{mLabel}{shareOn ? `, share of ${baseWord}` : ''}</div>
+            {cardRows.length === 0 ? <div className="tt-card__none">No {many} picked</div> : cardRows.map(r => (
               <div key={r.key} className="tt-card__row">
                 <i className={`tt-sw${r.slot == null ? ' tt-sw--total' : ''}`}
                   style={r.slot != null ? { background: `var(--tt-${r.slot + 1})`, borderColor: `var(--tt-${r.slot + 1})` } : undefined} />
@@ -392,7 +468,8 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
       <div className="tt-foot">
         <span>
           UTC days, from {dayLabel(firstDay)}, when recording began. Today is dashed: the day is not over.
-          {shareOn && ` A share needs ${MIN_FOR_SHARE} or more visitors that day, so quiet days leave a gap.`}
+          {config.note ? ` ${config.note}` : ''}
+          {shareOn && ` A share needs ${MIN_FOR_SHARE} or more ${baseWord} that day, so quiet days leave a gap.`}
         </span>
         <button type="button" className="tt-link" onClick={() => setAsTable(!asTable)}>
           {asTable ? 'Hide the numbers' : 'Show the numbers'}
@@ -403,7 +480,7 @@ export function TrafficTrends({ rows, now }: { rows: TrafficDay[]; now: number }
           <table className="ao-table tt-table">
             <thead>
               <tr><th>Day (UTC)</th>{series.map(s => <th key={s.source} className="num">{sourceName(s.source)}</th>)}
-                {showTotal && <th className="num">All sources</th>}</tr>
+                {showTotal && <th className="num">All {many}</th>}</tr>
             </thead>
             <tbody>
               {[...days.keys()].reverse().map(i => (

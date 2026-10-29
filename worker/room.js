@@ -42,6 +42,7 @@ import {
 import { NON_WORLD_TYPES, stationTypeMul } from './systems.js';
 import { advanceSunGates, mainSystemSql, tellEveryone, recordGateTransit } from './sunGates.js';
 import { advanceKaiju } from './kaiju.js';
+import { advanceInvasion, scienceBlightMult } from './invasion.js';
 import { legDilation } from './wellDilation.js';
 import { binaryCloseness, binaryStarRow } from './binaryDance.js';
 import { readSchedule, intervalAt, nextTickAt } from './tickSchedule.js';
@@ -709,6 +710,29 @@ export class Room {
       this.broadcast({ type: 'room_deleted' });
       for (const ws of this.state.getWebSockets()) {
         try { ws.close(4002, 'room_deleted'); } catch {}
+      }
+      try { await this.state.storage.deleteAlarm(); } catch {}
+      try { await this.state.storage.deleteAll(); } catch {}
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/abandon' && req.method === 'POST') {
+      // The game was ended for inactivity (worker/cull.js): D1 already says
+      // completed / abandoned. Cancel the alarm so no tick runs again and
+      // tell whoever is in the room, exactly as a victory does, with no
+      // winner. The sockets stay open so the players see the ending.
+      let tick = 0;
+      try { tick = Number((await req.json())?.tick) || 0; } catch { /* no body */ }
+      try { await this.state.storage.deleteAlarm(); } catch {}
+      this.broadcast({ type: 'game_completed', tick, winner_faction_id: null, victory_type: 'abandoned' });
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/close-idle' && req.method === 'POST') {
+      // A lobby nobody touched for 15 days (worker/cull.js): D1 says the
+      // room is closed. Tell the sockets, close them and forget the lobby
+      // state (chat, ready flags). Nothing here ever ticks.
+      this.broadcast({ type: 'room_closed' });
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.close(4003, 'room_closed'); } catch {}
       }
       try { await this.state.storage.deleteAlarm(); } catch {}
       try { await this.state.storage.deleteAll(); } catch {}
@@ -4472,7 +4496,7 @@ export class Room {
               `INSERT INTO chronicle_entries
                 (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, 'faction_eliminated', ?, ?, 'public', ?)`)
-            .bind(`c${tick}_elim_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+            .bind(`c${tick}_elim_${f.id}`, gameId, tick, f.id,
                   JSON.stringify({ faction_name: f.name ?? null, cause: 'no_settlements' }),
                   Date.now())
             .run();
@@ -4513,7 +4537,7 @@ export class Room {
               `INSERT OR IGNORE INTO chronicle_entries
                 (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
                VALUES (?, ?, ?, 'faction_revived', ?, ?, 'public', ?)`)
-            .bind(`c${tick}_revive_${String(f.id).slice(-8)}`, gameId, tick, f.id,
+            .bind(`c${tick}_revive_${f.id}`, gameId, tick, f.id,
                   JSON.stringify({ faction_name: f.name ?? null }), Date.now())
             .run();
         } catch (e) { console.error('revival chronicle failed', f.id, e); }
@@ -5805,6 +5829,13 @@ export class Room {
     } catch (e) {
       console.error('advanceSunGates failed', e);
     }
+    // The Three Body event (invasion.js): the fleet from Verdant. A no-op
+    // unless the host turned it on.
+    try {
+      await advanceInvasion(this.env, gameId, tick, CFG, kaijuHooks);
+    } catch (e) {
+      console.error('advanceInvasion failed', e);
+    }
 
     // 2d-bis. Finished MOBILE sites become hulls. Non-throwing: a
     // launch failure must not take the rest of the tick with it.
@@ -5952,7 +5983,12 @@ export class Room {
     const fuelYieldMultOf = (fid) => Number(sliderFor(fid).fuel_yield_multiplier ?? 1);
     const metalYieldMultOf = (fid) => Number(sliderFor(fid).metal_yield_multiplier ?? 1);
     const goldYieldMultOf = (fid) => Number(sliderFor(fid).gold_yield_multiplier ?? 1);
-    const scienceYieldMultOf = (fid) => Number(sliderFor(fid).science_yield_multiplier ?? 1);
+    // THE THREE BODY BLIGHT (invasion.js): every empire's science, silently.
+    // 1 outside the event; it names no cause anywhere a player can read.
+    let blight = 1;
+    try { blight = await scienceBlightMult(this.env.DB, gameId, tick, CFG); }
+    catch (e) { console.error('scienceBlightMult failed', e); }
+    const scienceYieldMultOf = (fid) => Number(sliderFor(fid).science_yield_multiplier ?? 1) * blight;
 
     // Senate sanction cache for this tick. Used by trade routes
     // (trade_embargo), combat damage (war_authorization), and body
@@ -9376,7 +9412,14 @@ export class Room {
                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
                 )
-                .bind(`c${tick}_cap_${lost.id.slice(-8)}`, gameId, tick,
+                // The WHOLE hull id (it carries the game's): the table's key
+                // is global, and `${tick}_cap_` + the id's last 8 ("t_mega_0")
+                // was already taken by any earlier game that lost the same
+                // hull on the same tick -- every Studio reshoot, and real
+                // games whose hull ids end alike. The insert failed, and took
+                // the batch's ship_destroyed rows with it: no kill in the log,
+                // no explosion on the map (2026-10-24).
+                .bind(`c${tick}_cap_${lost.id}`, gameId, tick,
                       fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
                       lost.owner_faction_id ?? null, ship?.parent_body_id ?? null,
                       capPayload, now));
@@ -9391,12 +9434,19 @@ export class Room {
             await this.env.DB.batch(deathBulk.writes.slice(i, i + 100));
           }
         } catch (e) { console.error('captain fate batch failed', e); }
-        try {
-          for (let i = 0; i < killChronicle.length; i += 100) {
-            await this.env.DB.batch(killChronicle.slice(i, i + 100));
+        // A batch is all or nothing: one bad row cannot be allowed to take
+        // the tick's other kills with it, so a failed chunk goes again a
+        // row at a time.
+        for (let i = 0; i < killChronicle.length; i += 100) {
+          const chunk = killChronicle.slice(i, i + 100);
+          try {
+            await this.env.DB.batch(chunk);
+          } catch (e) {
+            console.error('kill chronicle batch failed; row by row', e);
+            for (const st of chunk) {
+              try { await st.run(); } catch (e2) { console.error('kill chronicle row failed', e2); }
+            }
           }
-        } catch (e) {
-          console.error('kill chronicle batch failed', e);
         }
         // WHOSE ships. The toast this drives said "N ship(s) destroyed"
         // and nothing else, so a player could not tell their own fleet
@@ -9947,7 +9997,7 @@ export class Room {
                VALUES (?, ?, ?, 'tech_advanced', ?, ?, 'public', ?)`,
             )
             .bind(
-              `c${tick}_tech_${f.id.slice(-6)}_${f.research_tech_id}`,
+              `c${tick}_tech_${f.id}_${f.research_tech_id}`,
               gameId, tick, f.id,
               JSON.stringify({
                 tech_id: f.research_tech_id,

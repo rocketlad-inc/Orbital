@@ -212,6 +212,21 @@ check('funnel: dismissals of the one-time card are counted', funnel.surfaces.fin
 check('funnel: gifts sold, redeemed, voided', funnel.gifts.sold === 3 && funnel.gifts.redeemed === 1 && funnel.gifts.voided === 2, JSON.stringify(funnel.gifts));
 check('the funnel is admin-only', (await call(dashRoutes, 'GET', '/api/admin/commission', 'friend')).status === 404);
 
+// The trend chart's rows: the same funnel, one row per (UTC day, surface).
+const dayOf = (ms) => Math.floor(ms / 86_400_000) * 86_400_000;
+const daily = funnel.daily ?? [];
+const sum = (surface, k) => daily.filter(r => r.source === surface).reduce((s, r) => s + r[k], 0);
+check('daily: rows carry a UTC day, a surface and the funnel steps',
+  daily.length > 0 && daily.every(r => r.day_ms === dayOf(r.day_ms) && typeof r.source === 'string'), JSON.stringify(daily[0]));
+check('daily: views, players, clicks and checkouts add up to the table for a surface',
+  sum('designer', 'views') === designer.views && sum('designer', 'viewers') >= designer.viewers
+  && sum('designer', 'clicks') === designer.clicks && sum('designer', 'checkouts') === designer.checkouts, JSON.stringify(daily.filter(r => r.source === 'designer')));
+check('daily: paid sales per surface add up to the table too',
+  sum('endgame', 'paid') === 1 && Object.keys(by(funnel.surfaces)).every(s => sum(s, 'paid') === funnel.surfaces.find(x => x.surface === s).paid), JSON.stringify(daily.filter(r => r.paid)));
+check('daily: robots are left out (designer had a third view from a bot)', sum('designer', 'views') === 2);
+check('daily: the chart says what "now" is, for its Today point', typeof funnel.now === 'number' && dayOf(funnel.now) === Math.max(...daily.map(r => r.day_ms)));
+function by(rowsIn) { return Object.fromEntries(rowsIn.map(r => [r.surface, r])); }
+
 // ---- the sales dashboard (GET /api/admin/commission/sales) ---------------
 const salesRes = await call(dashRoutes, 'GET', '/api/admin/commission/sales', 'admin');
 const sales = salesRes.body;

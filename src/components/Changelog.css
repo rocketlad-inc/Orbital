@@ -194,3 +194,27 @@
   .cl-body { font-size: 15px; }
   .cl-body h2 { font-size: 19px; margin-top: 34px; }
 }
+
+/* ---- links to a post's own page (/devlog/<slug>) ----
+   Titles read as titles, not as underlined links, until pointed at. */
+.cl-title-link, .cl-crumb { color: inherit; text-decoration: none; }
+.cl-title-link:hover { color: #ffb84d; }
+.cl-crumb:hover { color: #f2f7fb; }
+.cl-title-link:focus-visible, .cl-crumb:focus-visible, .cl-more a:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 3px; }
+
+/* ---- more from the devlog, under a single post ---- */
+.cl-more {
+  margin-top: 56px;
+  padding-top: 32px;
+  border-top: 1px solid #22303f;
+}
+.cl-more ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.cl-more li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.cl-more a { color: #ffb84d; text-decoration: none; font-size: 16px; line-height: 1.4; }
+.cl-more a:hover { color: #ffd180; }
+.cl-more-date { font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f8296; }
+
+/* Links inside a post body: paths on this site only (worker/devlog.js). */
+.cl-body a { color: #ffb84d; text-decoration: none; border-bottom: 1px solid rgba(255, 184, 77, 0.35); }
+.cl-body a:hover { color: #ffd180; border-bottom-color: #ffd180; }
+.cl-body a:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 2px; }

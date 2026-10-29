@@ -39,6 +39,8 @@ import { TrialLayer } from './multiplayer/trial/TrialLayer';
 import { SaveEmpireHost } from './multiplayer/trial/SaveEmpire';
 import './multiplayer/trial/trial.css';
 import { Landing } from './components/Landing';
+import { ANSWER_PAGES } from './content/answerPages';
+import { DEVLOG_POST_RE } from './content/devlogStore';
 import { SharedRecap } from './multiplayer/SharedRecap';
 import { StudioBridge } from './multiplayer/studio/StudioBridge';
 import { ResetPassword } from './multiplayer/ResetPassword';
@@ -47,7 +49,7 @@ import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
-import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
+import { WorldMenuOverlay } from './multiplayer/WorldMenuOverlay';
 import { WarpGateCard } from './multiplayer/WarpGateCard';
 import { MeteoroidCard } from './multiplayer/MeteoroidCard';
 import { MegastructureCard } from './multiplayer/MegastructureCard';
@@ -79,6 +81,11 @@ import './styles/mobile.css';
 import './styles/shellJs.css';
 import { lazyChunk } from './util/lazyChunk';
 import { syncView, viewOf, type AppView } from './platform/viewHistory';
+
+/** Landing pages a signed-in player can open by URL (see docRoute). */
+const DOC_PATHS = ['/changelog', '/how-to-play', '/privacy', '/press', '/credits', ...ANSWER_PAGES.map(p => p.path)];
+/** A doc route, a devlog post's own page (/devlog/<slug>) included. */
+const isDocPath = (p: string) => DOC_PATHS.includes(p) || DEVLOG_POST_RE.test(p);
 
 // The orbital-battle layout test page (/?battle). Lazy: it is a tool,
 // not the game, so it stays out of the main bundle.
@@ -239,16 +246,6 @@ function GameUI({
   const { gameState, uiState } = useGameContext();
   useAutosave(gameState, !isMultiplayer);
 
-  // World-menu preference (MP only — SP never reads this). Synced to
-  // the toggle pill via the pref event so flipping it re-renders here.
-  const [worldMenuOn, setWorldMenuOn] = useState(() => worldMenuPref());
-  useEffect(() => {
-    if (!isMultiplayer) return;
-    const onPref = () => setWorldMenuOn(worldMenuPref());
-    window.addEventListener('orbital:world-menu-pref', onPref);
-    return () => window.removeEventListener('orbital:world-menu-pref', onPref);
-  }, [isMultiplayer]);
-
   useEffect(() => {
     const handleResize = () => {
       setWindowSize({ width: window.innerWidth, height: window.innerHeight });
@@ -379,14 +376,12 @@ function GameUI({
       {isMultiplayer && <EliminationBanner />}
       {isMultiplayer && <CapitalLossAlert />}
 
-      {/* World menu (MULTIPLAYER ONLY, default ON with a kill-switch
-          pill). SP is DEAD code-wise here: isMultiplayer=false always
-          renders <BodyInspector /> exactly as before — the world menu
-          and its toggle are unreachable outside MP. */}
-      {isMultiplayer && worldMenuOn
+      {/* World menu (MULTIPLAYER ONLY, always on: the classic-UI pill is
+          gone). SP is DEAD code-wise here: isMultiplayer=false always
+          renders <BodyInspector /> exactly as before. */}
+      {isMultiplayer
         ? <><WorldMenuOverlay /><WarpGateCard /><MeteoroidCard /><MegastructureCard /></>
         : <BodyInspector />}
-      {isMultiplayer && <WorldMenuToggle on={worldMenuOn} />}
       {/* ThreatsPanel (the top-right popup) is RETIRED — incoming hostile
           ships now live in the Situation Log's "Incoming threats" NOW-tier
           section, which says strictly more than the popup did (attacker,
@@ -546,7 +541,7 @@ function AppShell() {
   // path is the whole point, and it has to work for whoever clicks it.
   const [docRoute, setDocRoute] = useState<string | null>(() =>
     typeof window !== 'undefined'
-      && ['/changelog', '/how-to-play', '/privacy', '/press', '/credits'].includes(window.location.pathname)
+      && isDocPath(window.location.pathname)
       ? window.location.pathname : null,
   );
   /** The token out of /recap/<token>, if that is where we are. */
@@ -571,7 +566,7 @@ function AppShell() {
   useEffect(() => {
     const onPop = () => {
       const p = window.location.pathname;
-      setDocRoute(['/changelog', '/how-to-play', '/privacy', '/press', '/credits'].includes(p) ? p : null);
+      setDocRoute(isDocPath(p) ? p : null);
       setRecapToken(/^\/recap\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
       setFilmToken(/^\/film\/([A-Za-z0-9_-]+)\/?$/.exec(p)?.[1] ?? null);
     };

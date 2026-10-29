@@ -18,6 +18,11 @@ installPageZoomLock();
 // and then tidies our tag out of the address bar.
 captureAttribution();
 
+// The static copy of this page for crawlers that run no JavaScript
+// (scripts/prerender-pages.mjs). CSS already hides it once scripts run;
+// removing it stops its ids shadowing the live page's.
+document.getElementById('seo-page')?.remove();
+
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 root.render(
   <React.StrictMode>

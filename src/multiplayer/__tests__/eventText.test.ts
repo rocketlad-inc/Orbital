@@ -30,6 +30,8 @@ const ROWS: Row[] = [
     "T+12  Zed Corp has founded a new settlement and is back in the war"],
   ["faction_joined", "faction_joined", null, null, 12, {"name": "Orion", "capital_name": "Ceres"},
     "T+12  Orion joins the game — capital at Ceres"],
+  ["game_abandoned", "game_abandoned", null, null, 812, {"reason": "idle", "days": 15},
+    "T+812  ⏹ GAME OVER — ended after 15 days without activity"],
   ["faction_joined bare", "faction_joined", null, null, 12, {},
     "T+12  A new faction joins the game — capital at an unclaimed world"],
   ["ship_destroyed plain", "ship_destroyed", "f1", null, 12, {"ship_name": "VSS Tuskegee", "ship_class": "frigate", "body_name": "Mars"},
@@ -361,7 +363,7 @@ const ev = (r: Row) => ({
 
 /** Every kind the provider's formatter knows (plus one it does not). */
 const KINDS = [
-  'game_started', 'faction_eliminated', 'faction_revived', 'faction_joined', 'ship_destroyed', 'captain_lost',
+  'game_started', 'game_abandoned', 'faction_eliminated', 'faction_revived', 'faction_joined', 'ship_destroyed', 'captain_lost',
   'captain_rescued', 'ship_damaged', 'settlement_destroyed', 'settlement_seized', 'settlement_razed',
   'ship_detonated', 'builds_destroyed', 'ship_retreated', 'asteroid_launched', 'asteroid_impact',
   'settlement_built', 'ship_built', 'dyson_initiated', 'dyson_milestone', 'dyson_damaged', 'dyson_collapsed',

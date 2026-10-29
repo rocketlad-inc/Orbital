@@ -17,6 +17,7 @@
 
 import { cleanInviteCode, stampReferral } from './invites.js';
 import { linkVisitToUser } from './visits.js';
+import { aiSourceName } from '../src/multiplayer/aiSources.js';
 
 /** Lowercase token: letters, digits, dot, dash, underscore. */
 export function cleanTag(v, max = 40) {
@@ -51,6 +52,9 @@ export function sourceFromReferrer(host) {
   if (!h) return null;
   if (h === 'android-app') return 'android-app';
   if (h === 'play.google.com') return 'google-play';
+  // AI assistants first: gemini.google.com is not Google search.
+  const ai = aiSourceName(h.replace(/^www\./, ''));
+  if (ai) return ai;
   for (const [re, name] of HOSTS) if (re.test(h)) return name;
   return h.replace(/^www\./, '');
 }
@@ -62,7 +66,9 @@ export function sourceFromReferrer(host) {
 export function readAttribution(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const from = cleanTag(raw.from);
-  const utmSource = cleanTag(raw.utm_source);
+  const utmTag = cleanTag(raw.utm_source);
+  // ?utm_source=chatgpt and ?utm_source=chatgpt.com are one assistant.
+  const utmSource = aiSourceName(utmTag) ?? utmTag;
   const referrer = sourceFromReferrer(raw.referrer);
   const inviteCode = cleanInviteCode(raw.invite_code);
   const source = from ?? utmSource ?? (raw.invite === true || inviteCode ? 'invite' : null) ?? referrer ?? 'direct';
@@ -84,7 +90,7 @@ export function readAttribution(raw) {
  * later sign-in can't rewrite where someone came from. Best-effort: a
  * failure here must never cost a signup.
  */
-export async function stampSignupSource(db, userId, raw) {
+export async function stampSignupSource(db, userId, raw, { trial = false } = {}) {
   const a = readAttribution(raw);
   if (!a) return;
   try {
@@ -101,5 +107,5 @@ export async function stampSignupSource(db, userId, raw) {
   }
   if (a.invite_code) await stampReferral(db, userId, { inviteCode: a.invite_code, by: a.by });
   // The browser's pre-signup funnel (0180) now has an account to belong to.
-  await linkVisitToUser(db, userId, raw?.anon);
+  await linkVisitToUser(db, userId, raw?.anon, { trial });
 }

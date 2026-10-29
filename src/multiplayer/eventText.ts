@@ -260,6 +260,9 @@ export function formatChronicleEvent(
       : N('game.started', factions.length));
   }
 
+  // Ended by the idle cull (worker/cull.js): nobody won.
+  if (ev.kind === 'game_abandoned') return out('⏹ ', T('game.abandoned'));
+
   if (ev.kind === 'faction_eliminated') {
     const name = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
     return out('☠ ', T('faction.eliminated', { name }));
@@ -485,6 +488,29 @@ export function formatChronicleEvent(
     const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
     const where = (parsed.body_name as string) ?? T('fb.aWorld');
     return out('🌍 ', T('terraform.complete', { where: where.toUpperCase(), owner }));
+  }
+
+  // THE THREE BODY EVENT (worker/invasion.js). The science blight that
+  // starts it is deliberately NOT here: nothing in the log explains it.
+  if (ev.kind === 'invasion_launched') {
+    return out('', T('invasion.launched', { n: num(Number(parsed.ships) || 0), at: tickNo(Number(parsed.arrive_tick)) }));
+  }
+  if (ev.kind === 'invasion_gate') {
+    const near = parsed.near as string | undefined;
+    return out('', near ? T('invasion.gate', { near }) : T('invasion.gateBare'));
+  }
+  if (ev.kind === 'invasion_assault') {
+    const world = (parsed.world as string) ?? T('fb.aWorld');
+    const at = tickNo(Number(parsed.arrive_tick));
+    return out('', T(parsed.earth ? 'invasion.assaultEarth' : parsed.home ? 'invasion.assaultHome' : 'invasion.assault', { world, at }));
+  }
+  if (ev.kind === 'invasion_world_taken' || ev.kind === 'invasion_earth_taken') {
+    const world = ((parsed.world as string) ?? T('fb.aWorld')).toUpperCase();
+    return out('', T(ev.kind === 'invasion_earth_taken' ? 'invasion.takenEarth' : 'invasion.taken', { world }));
+  }
+  if (ev.kind === 'invasion_done') return out('', T('invasion.done'));
+  if (ev.kind === 'invasion_repelled') {
+    return out('', T(parsed.why === 'worlds_lost' ? 'invasion.repelledWorlds' : 'invasion.repelledFleet'));
   }
 
   // THE LEVIATHAN (worker/kaiju.js), every moment of it.

@@ -187,6 +187,14 @@ export function BotControl() {
                   onChange={v => writeSetting('map_maker_enabled', v)} /></td>
               </tr>
               <tr>
+                <td>Idle game cull (kill switch)</td>
+                <td style={{ color: '#8a9fb3', fontSize: 12 }}>
+                  Once an hour, ends games with no player action for 15 days and closes lobbies nobody touched for 15 days. Sends no email. Off stops it; it never runs on staging.
+                </td>
+                <td><Toggle on={s.cull_enabled !== false} busy={busy === 'cull_enabled'}
+                  onChange={v => writeSetting('cull_enabled', v)} /></td>
+              </tr>
+              <tr>
                 <td>The Orbital Herald (channel)</td>
                 <td>
                   <select

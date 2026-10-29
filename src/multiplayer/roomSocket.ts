@@ -49,6 +49,8 @@ function permanentReason(status: number): RoomSocketGiveUpReason | null {
   if (status === 403) return 'forbidden';
   if (status === 401) return 'unauthorized';
   if (status === 404) return 'missing';
+  // 409 room_closed: a lobby the idle cull closed (worker/cull.js) never reopens.
+  if (status === 409) return 'missing';
   return null;
 }
 

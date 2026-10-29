@@ -5,6 +5,7 @@
 import { captureAttribution, attributionForSignup } from '../attribution';
 // @ts-ignore — plain JS worker module
 import { readAttribution, sourceFromReferrer, cleanTag } from '../../../worker/attribution.js';
+import { isAiSource } from '../aiSources';
 
 function visit(url: string, referrer = '') {
   window.history.replaceState(null, '', url);
@@ -79,5 +80,24 @@ describe('server cleaning and naming', () => {
     expect(sourceFromReferrer('bsky.app')).toBe('bluesky');
     expect(sourceFromReferrer('play.google.com')).toBe('google-play');
     expect(sourceFromReferrer('www.pbbg.com')).toBe('pbbg.com');
+  });
+
+  it('gives each AI assistant one name, by tag or by referrer, ahead of the search engines', () => {
+    // ChatGPT's own tag, its referrer and a hand-typed tag are one source.
+    expect(readAttribution({ utm_source: 'chatgpt.com' })!.source).toBe('chatgpt.com');
+    expect(readAttribution({ utm_source: 'ChatGPT' })!.source).toBe('chatgpt.com');
+    expect(sourceFromReferrer('chatgpt.com')).toBe('chatgpt.com');
+    expect(sourceFromReferrer('chat.openai.com')).toBe('chatgpt.com');
+    // Gemini is not Google search; Copilot is not a raw host.
+    expect(sourceFromReferrer('gemini.google.com')).toBe('gemini.google.com');
+    expect(sourceFromReferrer('www.google.com')).toBe('google');
+    expect(sourceFromReferrer('copilot.microsoft.com')).toBe('copilot.microsoft.com');
+    expect(sourceFromReferrer('www.perplexity.ai')).toBe('perplexity.ai');
+    expect(sourceFromReferrer('claude.ai')).toBe('claude.ai');
+    expect(isAiSource('chatgpt.com')).toBe(true);
+    expect(isAiSource('perplexity.ai')).toBe(true);
+    expect(isAiSource('google')).toBe(false);
+    // OpenAI's own site (its blog, say) is not the assistant.
+    expect(sourceFromReferrer('openai.com')).toBe('openai.com');
   });
 });

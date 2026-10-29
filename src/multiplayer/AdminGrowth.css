@@ -1,0 +1,48 @@
+/* The Growth tab's frame (AdminOverview.tsx Growth): a header with the one
+   Refresh, four headline cards, and section tabs. Mounted inside .ao, so
+   it uses the dashboard's tokens. */
+
+.gr-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.gr-title { margin: 0; font-size: 20px; font-weight: 650; color: var(--ao-ink); }
+.gr-sub { font-size: 13px; color: var(--ao-ink-3); }
+.gr-tool { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
+
+.gr-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.gr-kpi {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  background: var(--ao-surface-2, transparent); border: 1px solid var(--ao-line-2); border-radius: 12px; padding: 14px 16px;
+}
+.gr-kpi__label { font-size: 12.5px; color: var(--ao-ink-2); }
+.gr-kpi__value { font-size: 28px; font-weight: 650; line-height: 1.1; color: var(--ao-ink); font-variant-numeric: tabular-nums; }
+.gr-kpi__foot { font-size: 12.5px; color: var(--ao-ink-3); }
+
+.gr-tabs {
+  display: flex; flex-wrap: wrap; align-self: flex-start; max-width: 100%;
+  border: 1px solid var(--ao-line-2); border-radius: 10px; overflow: hidden;
+}
+.gr-tabs button {
+  appearance: none; border: 0; border-right: 1px solid var(--ao-line); background: transparent;
+  color: var(--ao-ink-2); font: inherit; font-size: 14px; padding: 9px 16px; cursor: pointer;
+}
+.gr-tabs button:last-child { border-right: 0; }
+.gr-tabs button:hover { color: var(--ao-ink); background: var(--ao-surface-3); }
+.gr-tabs button.is-on { color: var(--ao-ink); background: rgba(var(--ao-teal-rgb), 0.16); font-weight: 650; }
+.gr-tabs button:focus-visible { outline: 2px solid rgba(var(--ao-teal-rgb), 0.6); outline-offset: -2px; }
+
+.gr-duo { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+.gr-duo > * { flex: 1 1 380px; min-width: 0; }
+.gr-links .lg { margin: 0; height: 100%; box-sizing: border-box; }
+
+.gr-weekly__sub { margin: 0 0 8px; font-size: 13px; color: var(--ao-ink-2); }
+.gr-bars { display: flex; align-items: flex-end; gap: 14px; height: 170px; padding: 0 4px; }
+.gr-bar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; height: 100%; min-width: 0; }
+.gr-bar__n { font-size: 13px; font-weight: 600; color: var(--ao-ink); font-variant-numeric: tabular-nums; }
+.gr-bar__fill { display: block; width: 100%; max-width: 56px; background: var(--ao-teal); border-radius: 6px 6px 0 0; }
+.gr-bar__fill.is-open { opacity: 0.55; }
+.gr-bar__label { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .gr-tool { margin-left: 0; width: 100%; }
+  .gr-tabs { width: 100%; }
+  .gr-tabs button { flex: 1 1 auto; padding: 9px 10px; }
+}

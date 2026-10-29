@@ -23,8 +23,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CombatCharts } from './CombatCharts';
 import { DEVLOG_FIGURES } from './DevlogFigures';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-import { SEED_POSTS } from '../content/devlogPosts';
+import { useDevlogPosts, devlogPath } from '../content/devlogStore';
 import './Changelog.css';
 
 interface Props {
@@ -33,24 +32,12 @@ interface Props {
    *  game. */
   ctaLabel: string;
   onCta: () => void;
+  /** Show only this post: its own page, /devlog/<slug>. */
+  slug?: string;
+  /** Open a site path in place (post titles are real links). */
+  onOpen?: (path: string) => void;
 }
 
-interface Post {
-  /** URL-safe id. Also the anchor, so a post can be linked directly. */
-  slug: string;
-  title: string;
-  /** Display date. Written out rather than parsed — no timezone games on
-   *  a static page. */
-  date: string;
-  /** One paragraph under the title, in the hero for the newest post. */
-  lede: string;
-  /** Authored HTML body (see the file header on why). */
-  html: string;
-  /** Render the combat matrix charts after the body. Game 3's notes are
-   *  the ones that need them; a flag beats hard-coding the component
-   *  into whichever post happens to be last. */
-  charts?: boolean;
-}
 
 
 
@@ -91,7 +78,7 @@ interface Mounts {
   slots: { key: string; el: Element }[];
 }
 
-const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
+const DevlogBody: React.FC<{ html: string; id?: string; onOpen?: (path: string) => void }> = ({ html, id, onOpen }) => {
   const hostRef = useRef<HTMLElement>(null);
   const [mounts, setMounts] = useState<Mounts>({ html, slots: [] });
 
@@ -122,6 +109,14 @@ const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
         id={id}
         className="cl-body"
         ref={hostRef}
+        // Links in a body are paths on this site (the sanitiser drops any
+        // other href): a plain click opens them in place, no reload.
+        onClick={e => {
+          const a = (e.target as Element).closest?.('a[href^="/"]');
+          if (!a || !onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          onOpen(a.getAttribute('href') as string);
+        }}
         // Authored HTML. Sanitised SERVER-SIDE on write against a tag
         // allow-list (worker/devlog.js) — that is the guard, not this
         // component, because the string now comes from a database.
@@ -135,55 +130,68 @@ const DevlogBody: React.FC<{ html: string; id?: string }> = ({ html, id }) => {
   );
 };
 
-// The compiled copy is now only a FALLBACK. Posts live in the database
-// and are edited from the admin panel; this renders when /api/devlog
-// cannot be reached, so a devlog outage degrades to "slightly stale"
-// rather than to a blank page on the marketing site.
-const FALLBACK_POSTS: Post[] = SEED_POSTS.map((p: any) => ({
-  slug: p.slug,
-  title: p.title,
-  date: p.date,
-  lede: p.lede,
-  html: p.html,
-  charts: !!p.charts,
-}));
+/** A real link (crawlers follow it) that a plain click opens in place. */
+const PageLink: React.FC<{ href: string; onOpen?: (path: string) => void; className?: string; children: React.ReactNode }> = ({ href, onOpen, className, children }) => (
+  <a
+    className={className}
+    href={href}
+    onClick={e => {
+      if (!onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      onOpen(href);
+    }}
+  >
+    {children}
+  </a>
+);
 
-export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
-  // Posts come from the server so an update can be published without a
-  // deploy. The compiled copy renders FIRST, immediately, and is
-  // replaced when the fetch lands — a marketing page that flashes empty
-  // while it waits for an API is worse than one that is briefly stale.
-  const [posts, setPosts] = useState<Post[]>(FALLBACK_POSTS);
+export const Changelog: React.FC<Props> = ({ ctaLabel, onCta, slug, onOpen }) => {
+  const { posts, settled } = useDevlogPosts();
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/devlog', { credentials: 'include' })
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (cancelled || !data) return;
-        const rows = Array.isArray(data.posts) ? data.posts : [];
-        // An EMPTY list is not an answer worth rendering: it means the
-        // table has not seeded yet, or the query degraded. Keep what we
-        // have rather than blanking the page.
-        if (rows.length === 0) return;
-        setPosts(rows.map((r: any) => ({
-          slug: String(r.slug ?? ''),
-          title: String(r.title ?? ''),
-          date: String(r.date ?? ''),
-          lede: String(r.lede ?? ''),
-          html: String(r.html ?? ''),
-          charts: !!r.charts,
-        })));
-      })
-      .catch(() => { /* fallback already on screen */ });
-    return () => { cancelled = true; };
-  }, []);
+  // ONE POST, at /devlog/<slug>: its own page, so it can be linked,
+  // searched for and cited on its own. A slug the live list does not
+  // have (yet) waits for it; one it really lacks gets the whole devlog.
+  if (slug) {
+    const post = posts.find(p => p.slug === slug);
+    if (!post && !settled) return <div className="cl" />;
+    if (post) {
+      const others = posts.filter(p => p.slug !== slug);
+      return (
+        <div className="cl">
+          <div className="cl-hero">
+            <div className="cl-eyebrow"><PageLink href="/changelog" onOpen={onOpen} className="cl-crumb">— DEVLOG</PageLink></div>
+            <h1 className="cl-title">{post.title}</h1>
+            <div className="cl-date">{post.date}</div>
+            <div className="cl-lede">{post.lede}</div>
+          </div>
+          <DevlogBody id={post.slug} html={post.html} onOpen={onOpen} />
+          {post.charts && <CombatCharts />}
+          <div className="cl-cta">
+            <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>
+          </div>
+          {others.length > 0 && (
+            <nav className="cl-more" aria-label="More from the devlog">
+              <div className="cl-eyebrow">MORE FROM THE DEVLOG</div>
+              <ul>
+                {others.map(p => (
+                  <li key={p.slug}>
+                    <PageLink href={devlogPath(p.slug)} onOpen={onOpen}>{p.title}</PageLink>
+                    <span className="cl-more-date">{p.date}</span>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+        </div>
+      );
+    }
+  }
 
   // The newest post fronts the page: it is what someone arriving after
   // an announcement came to read. Everything older stays published
   // below it, in full, rather than collapsing into a list of links —
   // this is a devlog people scroll, not a release archive people
-  // search. Revisit when the page gets long.
+  // search. Each title links to the post's own page.
   const [newest, ...older] = posts;
   if (!newest) return null;
 
@@ -191,12 +199,12 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
     <div className="cl">
       <div className="cl-hero">
         <div className="cl-eyebrow">— DEVLOG</div>
-        <h1 className="cl-title">{newest.title}</h1>
+        <h1 className="cl-title"><PageLink href={devlogPath(newest.slug)} onOpen={onOpen} className="cl-title-link">{newest.title}</PageLink></h1>
         <div className="cl-date">{newest.date}</div>
         <div className="cl-lede">{newest.lede}</div>
       </div>
 
-      <DevlogBody id={newest.slug} html={newest.html} />
+      <DevlogBody id={newest.slug} html={newest.html} onOpen={onOpen} />
       {newest.charts && <CombatCharts />}
 
       {older.map(post => (
@@ -206,11 +214,11 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => {
               rather than a new section of the same piece. */}
           <div className="cl-post-head">
             <div className="cl-eyebrow">— EARLIER</div>
-            <h2 className="cl-post-title">{post.title}</h2>
+            <h2 className="cl-post-title"><PageLink href={devlogPath(post.slug)} onOpen={onOpen} className="cl-title-link">{post.title}</PageLink></h2>
             <div className="cl-date">{post.date}</div>
             <div className="cl-post-lede">{post.lede}</div>
           </div>
-          <DevlogBody html={post.html} />
+          <DevlogBody html={post.html} onOpen={onOpen} />
           {/* The combat matrix belongs to the post that discusses it,
               not to whichever post happens to be last on the page. */}
           {post.charts && <CombatCharts />}

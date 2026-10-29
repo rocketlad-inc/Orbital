@@ -262,12 +262,18 @@ async function handleOverview(req, env, { session }) {
 
     // games = games a real player spent a minute in that day (a
     // heartbeat, the same test as the 24h tile; '' = the lobby).
-    q(`SELECT day_ms, COUNT(DISTINCT user_id) AS players,
-              COUNT(DISTINCT CASE WHEN minutes > 0 AND game_id <> '' THEN game_id END) AS games,
-              SUM(minutes) AS minutes, SUM(actions) AS actions
-         FROM analytics_user_day
-        WHERE day_ms >= ?1 AND qa = 0
-        GROUP BY day_ms ORDER BY day_ms`,
+    // games_multi = the same, but only games two or more real players
+    // were in that day (solo games and trials leave the health chart).
+    q(`SELECT d.day_ms, COUNT(DISTINCT d.user_id) AS players,
+              COUNT(DISTINCT CASE WHEN d.minutes > 0 AND d.game_id <> '' THEN d.game_id END) AS games,
+              (SELECT COUNT(*) FROM (
+                 SELECT m.game_id FROM analytics_user_day m
+                  WHERE m.day_ms = d.day_ms AND m.qa = 0 AND m.minutes > 0 AND m.game_id <> ''
+                  GROUP BY m.game_id HAVING COUNT(DISTINCT m.user_id) >= 2)) AS games_multi,
+              SUM(d.minutes) AS minutes, SUM(d.actions) AS actions
+         FROM analytics_user_day d
+        WHERE d.day_ms >= ?1 AND d.qa = 0
+        GROUP BY d.day_ms ORDER BY d.day_ms`,
       series0),
 
     q(`SELECT CAST(u.created_at / ${DAY_MS} AS INTEGER) * ${DAY_MS} AS day_ms, COUNT(*) AS n
@@ -436,7 +442,8 @@ async function handleOverview(req, env, { session }) {
     COUNT(*) AS visitors,
     SUM(v.viewer_user_id IS NOT NULL) AS players,
     SUM(${step(['engaged'])}) AS engaged,
-    SUM(${step(['play_click', 'signup_tab', 'email_try', 'google_try', 'login_try'])}) AS pressed_play,
+    SUM(${step(['play_click', 'signup_tab', 'email_try', 'google_try', 'login_try', 'trial_click'])}) AS pressed_play,
+    SUM(v.trial_user_id IS NOT NULL) AS tried,
     SUM(${step(['signup_tab', 'email_try', 'google_try'])}) AS started,
     SUM(${step(['auth_error', 'google_error'])}) AS errors,
     SUM(v.signup_user_id IS NOT NULL) AS signed_up,
@@ -469,6 +476,43 @@ async function handleOverview(req, env, { session }) {
         GROUP BY 1, 2 ORDER BY 1`, tr0),
   ]);
 
+  // Play for Free (trial.js, 0184/0187): every trial game of the last 30
+  // days, one row each, with how far it got. A trial player is a shadow
+  // account, QA by its domain so it is never counted as a signup; these
+  // queries read shadows on purpose. The game is the key, because saving
+  // moves it to another account halfway through. A trial saved into a
+  // test account is left out.
+  const [trialGames, trialSteps, trialRefused] = await Promise.all([
+    q(`SELECT g.id, g.created_at, g.current_tick AS tick, g.status,
+              COALESCE(g.paused, 0) AS paused, COALESCE(g.auto_paused, 0) AS auto_paused, g.host_seen_ms,
+              s.shadow, s.shadow_claimed_ms AS saved_ms, COALESCE(s.signup_source, '') AS source,
+              (SELECT json_extract(e.payload, '$.kind') FROM analytics_events e
+                WHERE e.game_id = g.id AND e.kind = 'trial_claim' LIMIT 1) AS saved_how,
+              (SELECT json_extract(e.payload, '$.result') FROM analytics_events e
+                WHERE e.game_id = g.id AND e.kind = 'trial_claim' LIMIT 1) AS saved_into,
+              COALESCE((SELECT SUM(d.minutes) FROM analytics_user_day d WHERE d.game_id = g.id), 0) AS minutes,
+              COALESCE((SELECT 1 FROM analytics_user_day d
+                         WHERE d.user_id = s.shadow_claimed_by AND d.minutes > 0
+                           AND d.day_ms >= (s.shadow_claimed_ms / ${DAY_MS} + 1) * ${DAY_MS} LIMIT 1), 0) AS came_back
+         FROM games g
+         LEFT JOIN users s ON s.id = COALESCE(
+              (SELECT e.user_id FROM analytics_events e WHERE e.game_id = g.id AND e.kind = 'trial_start' LIMIT 1),
+              (SELECT m.user_id FROM room_members m JOIN users mu ON mu.id = m.user_id
+                WHERE m.room_id = g.id AND mu.shadow > 0 LIMIT 1))
+         LEFT JOIN users t ON t.id = s.shadow_claimed_by
+        WHERE g.trial = 1 AND g.created_at >= ?1 AND (t.id IS NULL OR (${notQa('t.email')}))
+        ORDER BY g.created_at DESC LIMIT 500`, tr0),
+    // Each trial moment, first time per game (src/multiplayer/trial/trialTelemetry.ts).
+    q(`SELECT e.game_id, substr(e.kind, 4) AS kind, MIN(e.created_at_ms) AS at
+         FROM analytics_events e
+        WHERE e.game_id IN (SELECT id FROM games WHERE trial = 1 AND created_at >= ?1)
+          AND e.kind LIKE 'ui/trial-%'
+        GROUP BY 1, 2`, tr0),
+    // Turned away by the per-address limit (no game, no account).
+    q(`SELECT COUNT(*) AS n FROM analytics_events
+        WHERE game_id IS NULL AND kind = 'trial_refused' AND created_at_ms >= ?1`, tr0).then(r => r[0]),
+  ]);
+
   // 7x24 UTC grid; the client shifts it to the viewer's clock.
   const heatGrid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   for (const r of heat) {
@@ -487,6 +531,7 @@ async function handleOverview(req, env, { session }) {
       day_ms: d,
       players: r?.players ?? 0,
       games: r?.games ?? 0,
+      games_multi: r?.games_multi ?? 0,
       minutes: r?.minutes ?? 0,
       actions: r?.actions ?? 0,
       signups: signupsByDay.get(d) ?? 0,
@@ -558,6 +603,11 @@ async function handleOverview(req, env, { session }) {
       devices: trDevices,
       countries: trCountries,
       daily: trDaily,
+    },
+    trial: {
+      games: trialGames,
+      steps: trialSteps,
+      refused: Number(trialRefused?.n ?? 0),
     },
     journey: {
       signed_up: journey?.signed_up ?? 0,
@@ -1042,9 +1092,13 @@ async function handleCommissionFunnel(req, env, { session, url }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
   const days = Math.max(1, Math.min(180, parseInt(url.searchParams.get('days') ?? '30', 10) || 30));
-  const since = Date.now() - days * DAY_MS;
+  const now = Date.now();
+  const since = now - days * DAY_MS;
+  // The per-day chart always gets the last 30 UTC days, whatever the
+  // table's window (it picks 7 / 14 / 30 itself).
+  const since30 = floorDay(now) - 29 * DAY_MS;
   const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).all().then(r => r.results ?? []);
-  const [events, paid, gifts, asks] = await Promise.all([
+  const [events, paid, gifts, asks, dayEvents, dayPaid] = await Promise.all([
     q(`SELECT e.kind,
               COALESCE(json_extract(e.payload, '$.from'), 'other') AS surface,
               COALESCE(json_extract(e.payload, '$.result'), '') AS result,
@@ -1063,6 +1117,20 @@ async function handleCommissionFunnel(req, env, { session, url }) {
          FROM commission_gifts WHERE created_at >= ?1`, since),
     q(`SELECT commission_ask_action AS action, COUNT(*) AS n
          FROM users WHERE commission_ask_ms >= ?1 GROUP BY 1`, since),
+    // The same funnel, per UTC day: views, players, clicks, checkouts.
+    q(`SELECT (e.created_at_ms / ${DAY_MS}) * ${DAY_MS} AS day_ms, e.kind,
+              COALESCE(json_extract(e.payload, '$.from'), 'other') AS surface,
+              COUNT(*) AS n, COUNT(DISTINCT e.user_id) AS players
+         FROM analytics_events e JOIN users u ON u.id = e.user_id
+        WHERE e.game_id IS NULL
+          AND (e.kind IN ('ui/commission-view', 'ui/commission-click')
+               OR (e.kind = 'commission/checkout' AND json_extract(e.payload, '$.result') = 'started'))
+          AND e.created_at_ms >= ?1 AND ${notQa('u.email')}
+        GROUP BY 1, 2, 3`, since30),
+    q(`SELECT (granted_at / ${DAY_MS}) * ${DAY_MS} AS day_ms, COALESCE(surface, 'before tracking') AS surface, COUNT(*) AS n
+         FROM user_entitlements
+        WHERE source = 'stripe' AND granted_at >= ?1
+        GROUP BY 1, 2`, since30),
   ]);
 
   const SURFACES = ['profile', 'lobby-flag', 'designer', 'endgame', 'thanks-card', 'skins', 'discord-feed', 'map-maker', 'lobby-map', 'invite'];
@@ -1081,9 +1149,27 @@ async function handleCommissionFunnel(req, env, { session, url }) {
     else if (e.kind === 'commission/checkout' && e.result === 'expired') r.expired += e.n;
   }
   for (const p of paid) if (p.source === 'stripe') get(p.surface).paid += p.n;
+
+  // One row per (day, surface) with anything on it, for the trend chart.
+  const daily = new Map();
+  const dayRow = (d, s) => {
+    const k = `${d}|${s}`;
+    if (!daily.has(k)) daily.set(k, { day_ms: Number(d), source: s, views: 0, viewers: 0, clicks: 0, checkouts: 0, paid: 0 });
+    return daily.get(k);
+  };
+  for (const e of dayEvents) {
+    const r = dayRow(e.day_ms, e.surface);
+    if (e.kind === 'ui/commission-view') { r.views += e.n; r.viewers += e.players; }
+    else if (e.kind === 'ui/commission-click') r.clicks += e.n;
+    else r.checkouts += e.n;
+  }
+  for (const p of dayPaid) dayRow(p.day_ms, p.surface).paid += p.n;
+
   return json({
     days,
+    now,
     surfaces: [...by.values()],
+    daily: [...daily.values()].sort((a, b) => a.day_ms - b.day_ms),
     gifts: {
       sold: gifts[0]?.sold ?? 0,
       redeemed: gifts[0]?.redeemed ?? 0,

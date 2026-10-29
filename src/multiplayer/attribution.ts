@@ -167,6 +167,15 @@ export function captureAttribution(): void {
     }
   }
 
+  // TikTok's built-in browser sends no referrer, so a visit from a video
+  // would be filed as "direct". It names itself in its User-Agent: say so,
+  // and the server files it under "tiktok" (worker/attribution.js), for the
+  // visit and for the account it becomes. A link tag still wins.
+  if (!now.referrer && typeof navigator !== 'undefined' && /musical_ly|BytedanceWebview|TikTok/i.test(navigator.userAgent || '')) {
+    now.referrer = 'tiktok.com';
+    now.in_app = 'tiktok';
+  }
+
   const stored = read();
   thisVisit = now;
   if (!stored || (!informative(stored) && informative(now))) write(now);
@@ -177,9 +186,12 @@ export function captureAttribution(): void {
   }
 
   // A visit that came from somewhere: count it before anyone signs up
-  // (worker/visits.js), and watch how far it gets.
+  // (worker/visits.js), and watch how far it gets. One that came from
+  // nowhere (typed or bookmarked) is counted as "direct" the first time
+  // this browser shows up; the server leaves out signed-in players.
   if (informative(now)) beaconLanding(now);
   else if (trackedHere()) watchEngagement();
+  else beaconLanding(now);
 
   if (TAG_PARAMS.some(k => p.has(k))) {
     for (const k of TAG_PARAMS) p.delete(k);

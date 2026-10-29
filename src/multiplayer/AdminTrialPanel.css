@@ -1,0 +1,38 @@
+/* AdminTrialPanel: Play for Free on the admin dashboard
+   (AdminTrialPanel.tsx). Mounted inside .ao, so it uses the dashboard's
+   tokens. One measure throughout (trials), so one hue: teal bars, the
+   width of each a share of trials started. */
+
+.atp-kpis { margin-bottom: 18px; }
+.atp-sub { margin: 18px 0 8px; font-size: 13px; font-weight: 600; color: var(--ao-ink-2); }
+.atp-note { margin: 8px 0 0; }
+
+.atp-funnel { display: flex; flex-direction: column; gap: 6px; }
+.atp-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 190px) minmax(80px, 1fr) 48px 48px minmax(0, 170px);
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.atp-row__label { color: var(--ao-ink); }
+.atp-row__bar { height: 10px; border-radius: 5px; background: rgba(150, 180, 210, 0.1); overflow: hidden; }
+.atp-row__bar i { display: block; height: 100%; min-width: 2px; border-radius: 5px; background: var(--ao-teal); }
+.atp-row__n, .atp-row__pct { font-family: var(--ao-data); font-variant-numeric: tabular-nums; text-align: right; }
+.atp-row__n { color: var(--ao-ink); }
+.atp-row__pct { color: var(--ao-ink-2); }
+.atp-row__step { font-size: 12px; color: var(--ao-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.atp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 20px; }
+
+.atp-tour { display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-top: 4px; }
+.atp-tour__col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.atp-tour__n { font-family: var(--ao-data); font-size: 11.5px; color: var(--ao-ink-2); font-variant-numeric: tabular-nums; }
+.atp-tour__bar { flex: 1 1 auto; width: 100%; max-width: 34px; display: flex; align-items: flex-end; border-radius: 4px; background: rgba(150, 180, 210, 0.08); }
+.atp-tour__bar i { display: block; width: 100%; border-radius: 4px; background: var(--ao-teal); }
+.atp-tour__label { font-family: var(--ao-data); font-size: 11.5px; color: var(--ao-ink-3); }
+
+@media (max-width: 640px) {
+  .atp-row { grid-template-columns: minmax(110px, 1fr) minmax(50px, 1fr) 40px 40px; }
+  .atp-row__step { display: none; }
+}

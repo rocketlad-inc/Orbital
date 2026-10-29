@@ -418,7 +418,7 @@ async function handleLogin(req, env) {
   await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
   // Signed in from a Play for Free trial: the trial game moves in.
-  await trial.claimShadow(env, req, row.id);
+  await trial.claimShadow(env, req, row.id, 'login');
   return json(
     { user: { id: row.id, email: row.email, display_name: row.display_name, ...(await noteVisit(env, row.id)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -587,7 +587,7 @@ async function handleGoogleAuth(req, env) {
 
   const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
   // Signed in with Google from a Play for Free trial: the trial moves in.
-  await trial.claimShadow(env, req, userId);
+  await trial.claimShadow(env, req, userId, 'google');
   return json(
     { user: { id: userId, email: userEmail, display_name: userDisplayName, ...(await noteVisit(env, userId)) } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -1397,13 +1397,21 @@ async function handleJoinByCode(req, env, session) {
 
 async function handleRoomSnapshot(_req, env, _session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+  if (await roomIsClosed(env, roomId)) return err(409, 'room_closed', 'room is closed');
   const res = await roomStub(env, roomId).fetch('https://room/snapshot');
   return new Response(res.body, { status: res.status, headers: { 'content-type': 'application/json' } });
+}
+
+/** A closed room (an idle lobby the cull closed, a Studio game) is not entered. */
+async function roomIsClosed(env, roomId) {
+  const r = await env.DB.prepare('SELECT status FROM rooms WHERE id = ?').bind(roomId).first();
+  return r?.status === 'closed';
 }
 
 async function handleRoomConnect(req, env, session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
   if (req.headers.get('upgrade') !== 'websocket') return err(426, 'upgrade_required', 'websocket upgrade required');
+  if (await roomIsClosed(env, roomId)) return err(409, 'room_closed', 'room is closed');
 
   const member = await env.DB
     .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
@@ -1473,6 +1481,7 @@ import * as panel from './panel.js';
 import * as wearOrders from './wearOrders.js';
 import * as battleWidget from './battleWidget.js';
 import * as devlog from './devlog.js';
+import * as devlogPages from './devlogPages.js';
 import * as gameFeed from './gameFeed.js';
 import * as ending from './ending.js';
 import * as profileAwards from './profileAwards.js';
@@ -1623,6 +1632,40 @@ export default {
           return await filmShare.handleFilmPage(req, env, fpm[1]);
         } catch (e) {
           console.error('film page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+      // A devlog post's own page and the sitemap that lists the posts
+      // (worker/devlogPages.js; both in run_worker_first). Any failure
+      // serves the plain app page / the static sitemap.
+      if (req.method === 'GET' && /^\/devlog\/?$/.test(url.pathname)) {
+        return Response.redirect(new URL('/changelog', req.url).toString(), 301);
+      }
+      const dpm = url.pathname.match(devlogPages.DEVLOG_PAGE_RE);
+      if (dpm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleDevlogPage(req, env, dpm[1]);
+        } catch (e) {
+          console.error('devlog page failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+      if (url.pathname === '/llms.txt' && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleLlms(req, env);
+        } catch (e) {
+          console.error('llms.txt failed', e);
+          return env.ASSETS.fetch(req);
+        }
+      }
+      if (url.pathname === '/sitemap.xml' && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await devlogPages.handleSitemap(req, env);
+        } catch (e) {
+          console.error('sitemap failed', e);
           return env.ASSETS.fetch(req);
         }
       }
@@ -2018,6 +2061,15 @@ export default {
       try { await trial.sweepIdleTrials(env); }
       catch (e) { console.error('trial idle sweep failed', e); }
 
+      // Games and lobbies nobody has touched for 15 days end (worker/cull.js).
+      // Hourly, claimed in D1, off on staging, behind a kill switch, and
+      // sends no email. Its own catch, and outside the Herald block below:
+      // a failure here never reaches the sweeps around it, nor theirs it.
+      try {
+        const { sweepIdle } = await import('./cull.js');
+        await sweepIdle(env);
+      } catch (e) { console.error('idle cull failed', e); }
+
       // Daily Discord digest — self-gating (fires only at
       // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the
       // tick pokes so today's final events make today's paper. A
@@ -2187,6 +2239,20 @@ export default {
           return handleRecapGifInternal(req, env, im[1]);
         }
       }
+      // The idle-game sweep's operator view (worker/cull.js): what WOULD be
+      // ended or closed, and what the sweep last did. Agent key only, and the
+      // same 404 as an unmapped route for anyone without it.
+      {
+        const cm = /^\/api\/internal\/cull\/(dry-run|status)\/?$/.exec(url.pathname);
+        if (cm) {
+          const presented = req.headers.get('x-agent-key');
+          if (req.method !== 'GET' || !env.AGENT_KEY || !presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
+            return err(404, 'not_found', 'not found');
+          }
+          const { handleCullInternal } = await import('./cull.js');
+          return handleCullInternal(req, env, cm[1]);
+        }
+      }
 
       if (req.method === 'GET' && url.pathname === '/api/devlog') {
         return devlog.routes
@@ -2262,6 +2328,12 @@ export default {
       if (Number(session.shadow) === 1 && req.method !== 'GET'
           && SHADOW_BLOCKED.some(re => re.test(url.pathname))) {
         return err(403, 'account_required', 'save your empire to do this');
+      }
+      // The trial player closed the page: pause their trial now (trial.js).
+      const tl = url.pathname.match(/^\/api\/games\/([^/]+)\/trial-leave$/);
+      if (tl && req.method === 'POST') {
+        if (Number(session.shadow) !== 1) return json({ paused: false });
+        return json(await trial.leaveTrial(env, decodeURIComponent(tl[1]), session));
       }
 
       // --- analytics telemetry (fire-and-forget semantics) -----------

@@ -7279,4 +7279,104 @@ CREATE TABLE IF NOT EXISTS game_sagas (
 --   unknown_terms   terms it cannot read
 ALTER TABLE trade_offers ADD COLUMN decline_reason TEXT;
 ` },
+  { name: "0187_trial_tracking.sql", sql: `-- ============================================================
+-- 0187 - Play for Free, tracked end to end (admin dashboard)
+--
+--   users.shadow_claimed_by     the account a trial was saved into, so a
+--                               trial can be followed past its save
+--   campaign_visits.trial_user_id
+--                               the trial (shadow) account this browser
+--                               started. Trials used to stamp
+--                               signup_user_id instead: the traffic table
+--                               then dropped the visit (a shadow is QA by
+--                               domain), and the real account made on
+--                               saving could never link to it.
+--
+-- The UPDATE moves those early links over. Safe to run twice.
+-- ============================================================
+ALTER TABLE users ADD COLUMN shadow_claimed_by TEXT;
+ALTER TABLE campaign_visits ADD COLUMN trial_user_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_campaign_visits_trial ON campaign_visits(trial_user_id);
+UPDATE campaign_visits SET trial_user_id = signup_user_id, signup_user_id = NULL
+ WHERE signup_user_id IN (SELECT id FROM users WHERE shadow > 0);
+` },
+  { name: "0188_game_cull.sql", sql: `-- ============================================================
+-- 0188 - Game culling: a game with no player action for 15 days is ended,
+-- and so is a lobby nobody has touched for 15 days (worker/cull.js).
+--
+-- games.no_cull   1 = never cull this game. The frozen marketing showcase
+--                 (Kai68RfB5BhV) feeds the landing page, the press kit, the
+--                 OG card and the Play listing art, so it is marked here.
+--                 Every other game reads 0 (cullable).
+-- cull_log        the audit trail: one row per game ended or lobby closed,
+--                 with the last activity the sweep saw and why.
+--                 PRIMARY KEY (id, kind) so a repeat run cannot log twice.
+-- cull_runs       one row per hourly sweep slot. The row IS the claim: the
+--                 INSERT OR IGNORE that lands runs the sweep, so concurrent
+--                 crons and cold isolates run it once. It doubles as the
+--                 operator status (when it last ran and what it did).
+--
+-- Re-runnable: a repeat ADD COLUMN is skipped by the runner (duplicate
+-- column), the UPDATE sets the same value, the CREATEs are IF NOT EXISTS.
+-- ============================================================
+
+ALTER TABLE games ADD COLUMN no_cull INTEGER NOT NULL DEFAULT 0;
+
+UPDATE games SET no_cull = 1 WHERE id IN ('Kai68RfB5BhV', 'ij9VVSf4t5d4');
+
+CREATE TABLE IF NOT EXISTS cull_log (
+  id               TEXT NOT NULL,
+  kind             TEXT NOT NULL,
+  last_activity_ms INTEGER,
+  culled_ms        INTEGER NOT NULL,
+  reason           TEXT NOT NULL,
+  PRIMARY KEY (id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS cull_runs (
+  slot_ms        INTEGER PRIMARY KEY,
+  started_ms     INTEGER NOT NULL,
+  finished_ms    INTEGER,
+  games_ended    INTEGER NOT NULL DEFAULT 0,
+  lobbies_closed INTEGER NOT NULL DEFAULT 0,
+  games_left     INTEGER NOT NULL DEFAULT 0,
+  lobbies_left   INTEGER NOT NULL DEFAULT 0,
+  note           TEXT
+);
+` },
+  { name: "0189_invasion.sql", sql: `-- THE THREE BODY EVENT (worker/invasion.js).
+--
+-- One row per game that has the event. Everything the phases need to
+-- resume after a restart lives here, so the tick keeps no state of its
+-- own: advanceInvasion reads this row, decides, writes it back.
+--
+--   start_tick     the seeded tick the science blight begins
+--   phase          pending | blight | transit | siege | build | earth |
+--                  conquest | repelled | done
+--   phase_tick     the tick the current phase began
+--   faction_id     the invaders' monster-status faction
+--   site_body_id   where the fleet is going (a point on Sol's right side)
+--   arrive_tick    when the fleet lands there
+--   gate_body_id   the Sol end of the gate it lays; twin_body_id the other
+--   target_body_id the world being assaulted now
+--   held_body_id   the first world they took (their base)
+--   built          hulls the invaders have raised since landing
+--   taken_json     names of the worlds they hold, in order
+
+CREATE TABLE IF NOT EXISTS game_invasion (
+  game_id        TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+  start_tick     INTEGER NOT NULL,
+  phase          TEXT NOT NULL DEFAULT 'pending',
+  phase_tick     INTEGER NOT NULL DEFAULT 0,
+  faction_id     TEXT,
+  site_body_id   TEXT,
+  arrive_tick    INTEGER,
+  gate_body_id   TEXT,
+  twin_body_id   TEXT,
+  target_body_id TEXT,
+  held_body_id   TEXT,
+  built          INTEGER NOT NULL DEFAULT 0,
+  taken_json     TEXT NOT NULL DEFAULT '[]'
+);
+` },
 ];

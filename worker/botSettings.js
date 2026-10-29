@@ -44,6 +44,11 @@ export const DEFAULTS = {
    *  Off: only admins see it (so the house maps can be built and published
    *  before launch). On: everyone. Staging is always on. */
   map_maker_enabled: false,
+  /** THE IDLE-GAME CULL'S KILL SWITCH (worker/cull.js). On: the hourly
+   *  sweep ends games with no player action for 15 days and closes lobbies
+   *  nobody touched for 15 days. Off: it does nothing (the operator dry
+   *  run still works). Never runs on staging whatever this says. */
+  cull_enabled: true,
 };
 
 /** All settings, defaults merged with any stored overrides. */

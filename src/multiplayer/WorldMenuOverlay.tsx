@@ -3750,31 +3750,3 @@ const WmDysonCard: React.FC = () => {
   );
 };
 
-/** LocalStorage-backed preference for the MP world menu (default ON).
- *  Kill switch: flipping OFF restores the legacy BodyInspector without
- *  touching any SP code path (SP always uses BodyInspector). */
-const WM_PREF_KEY = 'orbital.world_menu';
-export function worldMenuPref(): boolean {
-  try { return localStorage.getItem(WM_PREF_KEY) !== '0'; } catch { return true; }
-}
-export function setWorldMenuPref(on: boolean): void {
-  try { localStorage.setItem(WM_PREF_KEY, on ? '1' : '0'); } catch { /* noop */ }
-  window.dispatchEvent(new CustomEvent('orbital:world-menu-pref'));
-}
-
-/** Tiny MP-only pill for flipping between the diegetic menu and the
- *  legacy inspector. Rendered by GameUI's MP branch in both modes so
- *  the kill switch is always reachable. */
-export const WorldMenuToggle: React.FC<{ on: boolean }> = ({ on }) => {
-  useI18n();
-  return (
-    <button
-      className="wm-toggle-pill"
-      data-testid="wm-toggle"
-      title={on ? t('worldmenu.toggle.toClassicTitle') : t('worldmenu.toggle.toWorldTitle')}
-      onClick={() => setWorldMenuPref(!on)}
-    >
-      {on ? t('worldmenu.toggle.classic') : t('worldmenu.toggle.world')}
-    </button>
-  );
-};

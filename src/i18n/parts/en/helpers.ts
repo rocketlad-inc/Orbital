@@ -288,7 +288,7 @@ export const helpers = {
   'helper.sit.strike.sub.force': 'Force it off the world and the charge breaks.',
   'helper.sit.strike.mine.sub': 'It breaks if the hull moves. Nothing else stops it.',
   'helper.sit.strike.showHull': 'Show the hull',
-  'helper.sit.siege.breached': '{body} is breached — boardable now',
+  'helper.sit.siege.breached': '{body} is breached — it can be captured now',
   'helper.sit.siege.attack': '{body} under attack — hull {pct}%',
   'helper.sit.siege.hostiles_one': '{n} hostile warship holding the orbit. Clear them off and it repairs itself.',
   'helper.sit.siege.hostiles_other': '{n} hostile warships holding the orbit. Clear them off and it repairs itself.',

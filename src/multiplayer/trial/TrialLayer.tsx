@@ -10,7 +10,8 @@
 //       TIME     after ten minutes of play: time the tab is visible AND
 //                the clock is running, outside the tour (it fired at
 //                T+1 after a long paused tutorial: playtest 2026-10-24);
-//   - the moment the Warlord declares war, a card says what that means.
+//   - the moment the Warlord declares war, a card says what that means;
+//   - closing the page pauses the trial (it wakes when they come back).
 // The menu entry (TopBar) opens the same sheet whenever they like.
 // ============================================================
 
@@ -20,6 +21,9 @@ import { useAuth } from '../AuthContext';
 import { useGameContext } from '../../state/gameContext';
 import { useTutorial } from '../../state/tutorial';
 import { openSaveEmpire } from './SaveEmpire';
+import { logTrial, setTrialGame } from './trialTelemetry';
+import { useMultiplayerActions } from '../MultiplayerActionsContext';
+import { TRIAL_TUTORIAL_STEPS } from '../../game/tutorialSteps';
 import { t } from '../../i18n/core';
 import { useI18n } from '../../i18n/react';
 import './trial.css';
@@ -43,7 +47,9 @@ export function TrialLayer() {
   useI18n();
   const { user } = useAuth();
   const { gameState } = useGameContext();
-  const { active, trialDone, startTrial } = useTutorial();
+  const { active, trialDone, startTrial, track, index } = useTutorial();
+  const mpActions = useMultiplayerActions();
+  useEffect(() => { setTrialGame(mpActions?.gameId); }, [mpActions?.gameId]);
   const uid = user?.id ?? '';
   const shadow = !!user?.shadow;
   const askedRef = useRef<Asked>(uid ? readAsked(uid) : {});
@@ -66,12 +72,26 @@ export function TrialLayer() {
     return () => clearTimeout(timer);
   }, [trialDone, active, startTrial]);
 
+  // The dashboard follows the tour step by step (trialTelemetry.ts): the
+  // furthest step shown, then whether it ended on the last one.
+  const lastStepRef = useRef(-1);
+  useEffect(() => {
+    if (!active || track !== 'trial' || index < 0) return;
+    lastStepRef.current = index;
+    logTrial(`tour-step-${index + 1}`);
+  }, [active, track, index]);
+  useEffect(() => {
+    if (active || !trialDone || lastStepRef.current < 0) return;
+    logTrial(lastStepRef.current >= TRIAL_TUTORIAL_STEPS.length - 1 ? 'tour-done' : 'tour-skip');
+    lastStepRef.current = -1;
+  }, [active, trialDone]);
+
   // THE CLOCK. A trial starts paused for its tutorial, whose last step is
   // Start the clock. Skipping the tour starts it instead. Once only: a
   // pause the player chooses afterwards is theirs to keep.
   const paused = !!gameState.solo?.paused;
   useEffect(() => {
-    if (!paused) { if (!askedRef.current.clock) mark({ clock: true }); return; }
+    if (!paused) { logTrial('clock'); if (!askedRef.current.clock) mark({ clock: true }); return; }
     if (!trialDone || active || askedRef.current.clock) return;
     mark({ clock: true });
     const gid = gameState.solo ? sessionStorage.getItem('orbital.tab_room') : null;
@@ -105,6 +125,23 @@ export function TrialLayer() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shadow, uid]);
+
+  // GONE: the page is closing, so the trial's clock stops now instead of
+  // running ~30 ticks for nobody until the idle sweep (worker/trial.js
+  // leaveTrial). A reload or a return wakes it on the next /state.
+  const gameId = mpActions?.gameId;
+  useEffect(() => {
+    if (!shadow || !gameId) return;
+    const onPageHide = () => {
+      try {
+        void fetch(`/api/games/${encodeURIComponent(gameId)}/trial-leave`, {
+          method: 'POST', credentials: 'same-origin', keepalive: true,
+        }).catch(() => { /* the idle sweep is the fallback */ });
+      } catch { /* the idle sweep is the fallback */ }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [shadow, gameId]);
 
   // TIME: ten minutes of PLAY, kept across reloads: the tab in view, the
   // clock running, and no tour on screen. Counted from the real time
@@ -144,6 +181,7 @@ export function TrialLayer() {
     if (!pair) return;
     const other = pair.split('|').find(x => x !== 'player') ?? null;
     mark({ war: true });
+    logTrial('war');
     setWarWith(other);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.warPairs]);

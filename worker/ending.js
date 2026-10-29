@@ -814,10 +814,13 @@ function deriveEmpires(game, R) {
  */
 export async function computeGameAwards(env, gameId) {
   const game = await env.DB.prepare(
-    `SELECT g.id, g.status, g.winner_faction_id, g.completed_at, r.name
+    `SELECT g.id, g.status, g.victory_type, g.winner_faction_id, g.completed_at, r.name
        FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?`,
   ).bind(gameId).first();
   if (!game || game.status !== 'completed') return null;
+  // A game ended for inactivity (worker/cull.js) had no winner and earned
+  // nobody a trophy: there are no awards to compute.
+  if (game.victory_type === 'abandoned') return null;
   const q = (sql, ...binds) => env.DB.prepare(sql).bind(...binds);
   const S = statQueries(q, gameId);
   const results = await env.DB.batch(STAT_SLOTS.map(i => S[i]));
@@ -859,6 +862,9 @@ function awardsOf(game, d) {
  * Returns { computed: boolean, stored: number }.
  */
 export async function recordGameAwards(env, gameId, computed) {
+  // Never for a game ended for inactivity (worker/cull.js): no winner, no trophies.
+  const ended = await env.DB.prepare('SELECT victory_type FROM games WHERE id = ?').bind(gameId).first();
+  if (ended?.victory_type === 'abandoned') return { computed: false, stored: 0 };
   const done = await env.DB.prepare('SELECT 1 AS x FROM game_awards_state WHERE game_id = ?').bind(gameId).first();
   if (done) return { computed: false, stored: 0 };
   const c = computed ?? await computeGameAwards(env, gameId);
@@ -1088,7 +1094,8 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
 
   // The profile's trophy case keeps these awards: store them now that someone
   // has opened the finished game (once; see recordGameAwards). Never breaks the page.
-  if (!opts.readOnly) {
+  const abandoned = game.victory_type === 'abandoned';
+  if (!opts.readOnly && !abandoned) {
     try { await recordGameAwards(env, gameId, awardsOf(game, D)); }
     catch (e) { console.error('ending: storing the game awards failed', e); }
   }
@@ -1119,7 +1126,8 @@ export async function buildEnding(env, gameId, viewerUserId, opts = {}) {
       empires: fRows.length,
     },
     factions,
-    awards,
+    // A game ended for inactivity has no superlatives: nobody earned them.
+    awards: abandoned ? [] : awards,
     series,
     totals: {
       battles: whole(bt.battles),

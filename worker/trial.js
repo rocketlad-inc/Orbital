@@ -23,9 +23,10 @@
 // it is not a signup in the dashboard until it is saved (analytics.js
 // QA_DOMAINS).
 //
-// A trial nobody is playing pauses after TRIAL_IDLE_MS without the
-// player (the cron's sweepIdleTrials), so computer empires do not play
-// for nobody all night; it resumes on the player's next /state.
+// A trial nobody is playing pauses, so computer empires do not play for
+// nobody all night: at once when the player closes the page (leaveTrial),
+// else after TRIAL_IDLE_MS without them (the cron's sweepIdleTrials). It
+// resumes on the player's next /state, or when they save it.
 // ============================================================
 
 import { newUserId, createSession, sessionCookie, readSessionCookie, lookupSession } from './auth.js';
@@ -84,8 +85,10 @@ async function giveTrialFleet(env, gameId, userId) {
     );
   }));
 }
-/** A trial pauses after this long without its player. */
-export const TRIAL_IDLE_MS = 15 * 60_000;
+/** A trial pauses after this long without its player. The /state poll
+ *  notes the player once a minute, so this is three missed minutes; it
+ *  was 15 until 10-25, and trials ran ~30 ticks for nobody. */
+export const TRIAL_IDLE_MS = 3 * 60_000;
 /** The trial's game, his picks. */
 const TRIAL_GAME = { rivals: 2, difficulty: 'peaceful', speed_ms: 30_000, personalities: ['ally', 'warlord'] };
 
@@ -123,6 +126,9 @@ export async function handleStart(req, env, session) {
     'SELECT COUNT(*) AS n FROM trial_starts WHERE ip_hash = ? AND created_at_ms > ?',
   ).bind(ipHash, now - 3_600_000).first();
   if (Number(recent?.n ?? 0) >= (Number(env.TRIALS_PER_HOUR) || TRIALS_PER_HOUR)) {
+    // Counted on the dashboard: a limit that turns real visitors away
+    // (a school, a phone carrier) should be seen, not guessed.
+    await logEvent(env, { kind: 'trial_refused' });
     return err(429, 'too_many_trials', 'too many trial games from here; try again later');
   }
 
@@ -142,7 +148,7 @@ export async function handleStart(req, env, session) {
     env.DB.prepare('INSERT INTO trial_starts (ip_hash, created_at_ms) VALUES (?, ?)').bind(ipHash, now),
   ]);
   // Where they came from rides along to the account they save into.
-  try { await stampSignupSource(env.DB, id, body.attribution); } catch { /* never blocks */ }
+  try { await stampSignupSource(env.DB, id, body.attribution, { trial: true }); } catch { /* never blocks */ }
 
   const made = await createSoloGame(env, id, TRIAL_GAME, { trial: true });
   if (made.error) return made.error;
@@ -154,7 +160,9 @@ export async function handleStart(req, env, session) {
   // A returning trial player opens straight into it.
   await env.DB.prepare('UPDATE users SET autoload_room_id = ? WHERE id = ?').bind(made.id, id).run();
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
-  logEvent(env, { gameId: made.id, userId: id, kind: 'trial_start' }).catch(() => {});
+  // Awaited: a promise left running after the response is cut off, and
+  // these two events are what the dashboard follows a trial by.
+  await logEvent(env, { gameId: made.id, userId: id, kind: 'trial_start' });
   return json(
     { ok: true, game_id: made.id, user: { id, display_name: displayName, shadow: 1 } },
     { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
@@ -168,7 +176,7 @@ export async function handleStart(req, env, session) {
  * anyone without one. Never throws: a failed merge must not fail the
  * sign-in (the shadow keeps its game; the client offers the save again).
  */
-export async function claimShadow(env, req, targetUserId) {
+export async function claimShadow(env, req, targetUserId, how = 'signup') {
   try {
     const shadow = await lookupSession(env.DB, readSessionCookie(req));
     if (!shadow || Number(shadow.shadow) !== 1 || shadow.user_id === targetUserId) return null;
@@ -179,7 +187,7 @@ export async function claimShadow(env, req, targetUserId) {
       env.DB.prepare('UPDATE room_members SET user_id = ? WHERE user_id = ?').bind(targetUserId, from),
       env.DB.prepare('UPDATE game_factions SET user_id = ? WHERE user_id = ?').bind(targetUserId, from),
       env.DB.prepare('UPDATE rooms SET host_id = ? WHERE host_id = ?').bind(targetUserId, from),
-      env.DB.prepare('UPDATE users SET shadow = 2, shadow_claimed_ms = ?, autoload_room_id = NULL WHERE id = ?').bind(now, from),
+      env.DB.prepare('UPDATE users SET shadow = 2, shadow_claimed_ms = ?, shadow_claimed_by = ?, autoload_room_id = NULL WHERE id = ?').bind(now, targetUserId, from),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(from),
       // The saved game opens on their next launch, unless they already
       // chose one.
@@ -194,8 +202,18 @@ export async function claimShadow(env, req, targetUserId) {
         });
       } catch { /* the room re-reads D1 on its own */ }
       await env.DB.prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?').bind(trial.id).run();
+      // Paused for the trip to Google (leaveTrial on pagehide) or while
+      // away: the saved game runs again, as an ordinary solo game.
+      await wakeTrial(env, trial.id, now);
     }
-    logEvent(env, { gameId: trial?.id ?? null, userId: targetUserId, kind: 'trial_claim' }).catch(() => {});
+    // How they saved, and whether into a brand-new account (made in this
+    // same request) or one they already had.
+    const target = await env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(targetUserId).first();
+    const fresh = !!target && now - Number(target.created_at) < 5 * 60_000;
+    await logEvent(env, {
+      gameId: trial?.id ?? null, userId: targetUserId, kind: 'trial_claim',
+      payload: { kind: how, result: fresh ? 'new' : 'existing' },
+    });
     return { from, gameId: trial?.id ?? null };
   } catch (e) {
     console.error('claimShadow failed', e);
@@ -206,28 +224,52 @@ export async function claimShadow(env, req, targetUserId) {
 /** The trial player is here: note it (once a minute, from the /state
  *  poll), and wake a trial the idle sweep paused. */
 export async function touchTrial(env, gameId, now = Date.now()) {
+  if (await wakeTrial(env, gameId, now)) return;
+  await env.DB.prepare('UPDATE games SET host_seen_ms = ? WHERE id = ? AND trial = 1').bind(now, gameId).run();
+}
+
+/** Undo an auto-pause (the idle sweep's or leaveTrial's); true if it woke. */
+async function wakeTrial(env, gameId, now = Date.now()) {
   const woke = await env.DB.prepare(
     `UPDATE games SET paused = 0, auto_paused = 0, host_seen_ms = ?,
             next_tick_at = ? + COALESCE(tick_interval_ms, 30000), state_version = state_version + 1
       WHERE id = ? AND trial = 1 AND auto_paused = 1`,
   ).bind(now, now, gameId).run();
-  if (woke?.meta?.changes > 0) {
-    try {
-      await env.ROOM.get(env.ROOM.idFromName(gameId)).fetch('https://room/rearm', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gameId }),
-      });
-    } catch (e) { console.error('trial rearm failed', e); }
-    return;
-  }
-  await env.DB.prepare('UPDATE games SET host_seen_ms = ? WHERE id = ? AND trial = 1').bind(now, gameId).run();
+  if (!(woke?.meta?.changes > 0)) return false;
+  try {
+    await env.ROOM.get(env.ROOM.idFromName(gameId)).fetch('https://room/rearm', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ gameId }),
+    });
+  } catch (e) { console.error('trial rearm failed', e); }
+  return true;
+}
+
+/** The trial player closed the page (POST /api/games/:id/trial-leave, a
+ *  keepalive fetch on pagehide): pause now, the same pause the idle sweep
+ *  makes. Their session's last_seen_at is cleared so the very next /state
+ *  (a reload, or another tab) runs touchTrial and wakes it, instead of
+ *  waiting out the once-a-minute throttle. A pause the player chose stays
+ *  theirs, and only the trial's own player can pause it. */
+export async function leaveTrial(env, gameId, session) {
+  const res = await env.DB.prepare(
+    `UPDATE games SET paused = 1, auto_paused = 1, next_tick_at = NULL, state_version = state_version + 1
+      WHERE id = ? AND trial = 1 AND status = 'active' AND COALESCE(paused, 0) = 0
+        AND EXISTS (SELECT 1 FROM game_factions f WHERE f.game_id = games.id AND f.user_id = ?)`,
+  ).bind(gameId, session.user_id).run();
+  await env.DB.prepare('UPDATE sessions SET last_seen_at = NULL WHERE token = ?').bind(session.token).run();
+  return { paused: (res?.meta?.changes ?? 0) > 0 };
 }
 
 /** The cron: pause trials nobody is playing. A player who paused it
- *  themselves (paused = 1, auto_paused = 0) is left alone. */
+ *  themselves (paused = 1, auto_paused = 0) is left alone, and so is a
+ *  SAVED trial: it is an ordinary solo game now, and host_seen_ms (noted
+ *  only for unsaved players) stopped moving when it was saved. */
 export async function sweepIdleTrials(env, now = Date.now()) {
   await env.DB.prepare(
     `UPDATE games SET paused = 1, auto_paused = 1, next_tick_at = NULL, state_version = state_version + 1
       WHERE trial = 1 AND status = 'active' AND COALESCE(paused, 0) = 0
-        AND COALESCE(host_seen_ms, 0) < ?`,
+        AND COALESCE(host_seen_ms, 0) < ?
+        AND EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
+                     WHERE f.game_id = games.id AND u.shadow = 1)`,
   ).bind(now - TRIAL_IDLE_MS).run();
 }

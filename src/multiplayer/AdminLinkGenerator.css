@@ -1,0 +1,61 @@
+/* AdminLinkGenerator: a tagged link for a post (AdminLinkGenerator.tsx).
+   Mounted inside .ao, so it uses the dashboard's tokens. */
+
+.lg {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--ao-line-2);
+  border-radius: 10px;
+  background: var(--ao-surface-2, transparent);
+}
+.lg-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }
+.lg-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--ao-ink); }
+.lg-sub { font-size: 12.5px; color: var(--ao-ink-2); }
+
+.lg-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; }
+.lg-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--ao-line-2); border-radius: 8px; overflow: hidden; }
+.lg-seg button {
+  appearance: none; border: 0; border-right: 1px solid var(--ao-line); background: transparent;
+  color: var(--ao-ink-2); font: inherit; font-size: 12.5px; padding: 6px 11px; cursor: pointer;
+}
+.lg-seg button:last-child { border-right: 0; }
+.lg-seg button:hover { color: var(--ao-ink); background: var(--ao-surface-3); }
+.lg-seg button.is-on { color: var(--ao-ink); background: rgba(var(--ao-teal-rgb), 0.16); font-weight: 600; }
+
+.lg-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ao-ink-2); min-width: 150px; }
+.lg-field i { font-style: normal; color: var(--ao-ink-3); }
+.lg-field input, .lg-url {
+  font: inherit; font-size: 13px; color: var(--ao-ink); background: var(--ao-surface-3);
+  border: 1px solid var(--ao-line-2); border-radius: 7px; padding: 6px 9px; min-width: 0;
+}
+.lg-field input:focus-visible, .lg-url:focus-visible { outline: 2px solid rgba(var(--ao-teal-rgb), 0.5); outline-offset: 0; }
+
+.lg-out { display: flex; gap: 8px; }
+.lg-url { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+.lg-copy {
+  appearance: none; border: 1px solid rgba(var(--ao-teal-rgb), 0.6); border-radius: 7px; cursor: pointer;
+  background: rgba(var(--ao-teal-rgb), 0.16); color: var(--ao-ink); font: inherit; font-size: 12.5px; font-weight: 600;
+  padding: 6px 14px; white-space: nowrap;
+}
+.lg-copy:hover { background: rgba(var(--ao-teal-rgb), 0.28); }
+
+.lg-hint { margin: 0; font-size: 12.5px; color: var(--ao-ink-2); }
+.lg-hint b { color: var(--ao-ink); font-weight: 600; }
+
+.lg-used { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lg-used__label { font-size: 12px; color: var(--ao-ink-3); }
+.lg-tag {
+  appearance: none; display: inline-flex; gap: 7px; align-items: center; border: 1px solid var(--ao-line-2);
+  border-radius: 999px; background: transparent; color: var(--ao-ink-2); font: inherit; font-size: 12px;
+  padding: 3px 10px; cursor: pointer;
+}
+.lg-tag:hover { color: var(--ao-ink); background: var(--ao-surface-3); }
+.lg-tag span { color: var(--ao-ink-3); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 560px) {
+  .lg-field { min-width: 0; flex: 1 1 100%; }
+  .lg-out { flex-direction: column; }
+}
