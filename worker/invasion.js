@@ -132,6 +132,19 @@ export async function scienceBlightMult(DB, gameId, tick, conf) {
   return blightMult(start, tick, d);
 }
 
+/**
+ * The blight as the player is allowed to see it (state.js): a number and
+ * when it lapses, under a label the game does not explain ("???"). Null
+ * outside the blight. The cause is never in this payload.
+ */
+export async function blightFor(DB, gameId, tick, conf) {
+  const mult = await scienceBlightMult(DB, gameId, tick, conf);
+  if (!(mult < 1)) return null;
+  const d = invasionDials(conf);
+  const start = startCache.get(gameId);
+  return { multiplier: mult, until_tick: Number(start) + d.blightTicks };
+}
+
 // ---- movement -----------------------------------------------------------------
 
 /** Ticks for an invader hull to cover `d`: a share of a player hull's. */

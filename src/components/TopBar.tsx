@@ -133,10 +133,10 @@ export const TopBar: React.FC<TopBarProps> = ({
       sl && {
         metal: sl.metalYieldMultiplier,
         credits: sl.goldYieldMultiplier,
-        science: sl.scienceYieldMultiplier,
+        science: sl.scienceYieldMultiplier * (gameState.blight?.multiplier ?? 1),
       },
     );
-  }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech, gameState.activeSliders]);
+  }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech, gameState.activeSliders, gameState.blight]);
 
   // The alert-chip derivation that used to live here (recent combat events,
   // ships arriving soon, low-fuel ships) is gone — both the EventLog dock

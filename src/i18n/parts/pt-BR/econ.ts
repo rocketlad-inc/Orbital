@@ -148,6 +148,7 @@ export const econ: Catalog = {
   'econ.out.rawTip': 'Mundo bruto — guarda {kept}% da produção no local e só {sent}% chega à reserva. Terraforme-o para enviar tudo.',
   'econ.out.raw': 'bruto, {pct}%',
   'econ.out.total': 'Produção total',
+  'econ.out.blightNote': 'Ciência -{pct}%, já contada acima',
   'econ.out.gross': 'Produção bruta',
   'econ.out.grossNote': 'a diferença fica guardada no local nos mundos brutos',
   'econ.mining.h': 'Mineração',

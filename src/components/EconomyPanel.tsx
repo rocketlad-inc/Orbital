@@ -146,10 +146,15 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
       })
       .sort((a, b) => (b.pool.metal + b.pool.credits + b.pool.science)
                     - (a.pool.metal + a.pool.credits + a.pool.science));
-  }, [gameState.settlements, gameState.bodies, gameState.factionTech, gameState.activeSliders]);
+  }, [gameState.settlements, gameState.bodies, gameState.factionTech, gameState.activeSliders, gameState.blight]);
 
   const grossTotal = useMemo(() => worlds.reduce((t, w) => add(t, w.gross), ZERO), [worlds]);
   const poolTotal = useMemo(() => worlds.reduce((t, w) => add(t, w.pool), ZERO), [worlds]);
+  // The unexplained science penalty: what it takes off the total above
+  // (already counted there), under the label "???".
+  const blightMul = gameState.blight?.multiplier ?? 1;
+  const blightLoss = blightMul > 0 && blightMul < 1 ? poolTotal.science / blightMul - poolTotal.science : 0;
+  const blightPct = Math.round((1 - blightMul) * 100);
 
   // ---- COSTS: standing upkeep, lumped by ship class -----------------
   const upkeepMul = gameState.activeSliders?.fleetUpkeepMultiplier ?? 1;
@@ -296,6 +301,17 @@ export const EconomyPanel: React.FC<{ gameId: string }> = ({ gameId }) => {
             <td className="econ-num">{n(poolTotal.credits)}</td>
             <td className="econ-num">{n(poolTotal.science)}</td>
           </tr>
+          {blightLoss > 0 && (
+            <tr className="econ-r--faint" data-testid="econ-blight">
+              <th scope="row">
+                ???
+                <span className="econ-where">{t('econ.out.blightNote', { pct: blightPct })}</span>
+              </th>
+              <td className="econ-num" />
+              <td className="econ-num" />
+              <td className="econ-num">−{n(blightLoss)}</td>
+            </tr>
+          )}
           {strandedShown && (
             <tr className="econ-r--faint">
               <th scope="row">

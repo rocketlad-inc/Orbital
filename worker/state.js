@@ -10,6 +10,7 @@ import { MEGASTRUCTURES, MEGA_BREACH_HP, megaBodyName } from './megastructures.j
 import { upkeepSplit, parsePartsJson, shipBaseStatsFromCfg } from './shipDesigns.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
+import { blightFor } from './invasion.js';
 
 /** Send the sun gate omen's true exit bearing (see sun_gate_next below). */
 const SHOW_OMEN_BEARING = false;
@@ -1659,6 +1660,23 @@ const tradeRoutesP = env.DB
     activeLaws = await activeLawsFor(env, gameId, game.current_tick ?? 0, me.id);
   } catch { /* readout just stays empty */ }
 
+  // THE THREE BODY BLIGHT (invasion.js): a science penalty on everyone that
+  // the game does not explain. It is shown, as a number under the label
+  // "???", in the top bar and the economy panel; the cause appears nowhere.
+  let blight = null;
+  try {
+    blight = await blightFor(env.DB, gameId, game.current_tick ?? 0, await loadGameConfig(env, gameId));
+  } catch { /* no blight shown */ }
+  if (blight) {
+    const pct = Math.round((1 - blight.multiplier) * 100);
+    activeLaws = [{
+      slider_id: 'blight', topic: '???', name: '???',
+      effect: `Science -${pct}%`,
+      i18n: { 'pt-BR': { topic: '???', name: '???', effect: `Ciência -${pct}%` } },
+      value: blight.multiplier, until_tick: blight.until_tick, proposal_id: null,
+    }, ...activeLaws];
+  }
+
   // ---- Accepted trade deals still waiting on MY freighter -------------
   //
   // Accepting a deal does NOT move goods: each side has to put a hauler
@@ -2562,6 +2580,9 @@ const tradeRoutesP = env.DB
     // Non-default laws in force on the caller, pre-worded, soonest to
     // lapse first.
     active_laws: activeLaws,
+    // The science blight, if one is on (see above). The client folds it
+    // into every readout's science multiplier.
+    blight,
     trade_routes: tradeRoutes,
     // Accepted deals with no hauler of mine on them yet. Only the goods
     // *I* owe per run — the panel owns the full ledger.
