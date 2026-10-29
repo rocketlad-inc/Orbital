@@ -240,6 +240,22 @@ export async function gateStands(DB, gameId) {
 
 // ---- writes -------------------------------------------------------------------
 
+/** The ship looks that are Commission-only for players (worker/store.js
+ *  PREMIUM_ICON_VARIANTS): C to Z. Letters only: a look is one capital
+ *  letter across all five hull classes. */
+export const PREMIUM_LOOKS = 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+/**
+ * THE ARMADA'S LOOK (Lorne, 2026-10-29: "don't give them the default ship
+ * sprites; randomly select a premium ship style and assign that"). One
+ * premium look per game, rolled from the game id so a retried tick, and
+ * every hull raised later, wear the same one: the invaders read as one
+ * people instead of a mixed bag.
+ */
+export function invaderLook(gameId) {
+  return PREMIUM_LOOKS[Math.floor(seededRand(`${gameId}|invasion|look`)() * PREMIUM_LOOKS.length)];
+}
+
 /** One invader hull, parked at `bodyId`. */
 function hullStmt(DB, gameId, fid, n, cls, bodyId, tick) {
   const st = SHIP_COMBAT_STATS[cls];
@@ -249,10 +265,10 @@ function hullStmt(DB, gameId, fid, n, cls, bodyId, tick) {
         parent_body_id, orbit_rp, orbit_ra, orbit_omega,
         orbit_m0, orbit_epoch, orbit_direction,
         fuel, fuel_max, status, built_at_tick,
-        hp, hp_max, damage_per_tick, stance)
-     VALUES (?, ?, ?, ?, ?, ?, 6, 6, ?, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'attack')`,
+        hp, hp_max, damage_per_tick, stance, icon_variant)
+     VALUES (?, ?, ?, ?, ?, ?, 6, 6, ?, 0, ?, 1, 0, 0, 'active', ?, ?, ?, ?, 'attack', ?)`,
   ).bind(shipId(gameId, n), gameId, fid, `${cls[0].toUpperCase()}${cls.slice(1)} ${n}`, cls,
-    bodyId, (n * 0.7) % TWO_PI, tick, tick, st.hp, st.hp, st.damage_per_tick);
+    bodyId, (n * 0.7) % TWO_PI, tick, tick, st.hp, st.hp, st.damage_per_tick, invaderLook(gameId));
 }
 
 async function setPhase(DB, gameId, phase, tick, extra = {}) {

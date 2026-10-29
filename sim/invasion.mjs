@@ -21,7 +21,7 @@ import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 import {
   invasionDials, blightMult, rollStartTick, invaderTicks, blightFor,
-  invasionFactionId, invasionGateId, invasionTwinId, invasionSiteId, invasionEmitterId,
+  invasionFactionId, invasionGateId, invasionTwinId, invasionSiteId, invasionEmitterId, invaderLook, PREMIUM_LOOKS,
 } from '../worker/invasion.js';
 import { legTicks, SHIP_ENGINE_ACCEL } from '../worker/burn.js';
 import { makeRouteMath } from '../worker/routeMath.js';
@@ -54,6 +54,11 @@ const check = (label, ok, detail = '') => {
   check("the start tick is seeded inside the window and varies by game",
     starts.every(t => t >= d.start && t <= d.end) && new Set(starts).size > 10
       && rollStartTick("same", d) === rollStartTick("same", d));
+
+  const looks = Array.from({ length: 60 }, (_, i) => invaderLook(`g${i}`));
+  check("each game's armada wears one premium look (C to Z, never the free A or B), rolled from the game id",
+    looks.every(l => PREMIUM_LOOKS.includes(l) && l !== "A" && l !== "B") && new Set(looks).size >= 10
+      && invaderLook("same") === invaderLook("same"), [...new Set(looks)].join(""));
 
   const ratio = [3000, 9000, 30000].map(dist => invaderTicks(dist, 0.75) / legTicks(dist, SHIP_ENGINE_ACCEL));
   check("their trip is about 75% of a player hull on a long haul (short hops round up to whole ticks)",
@@ -204,6 +209,10 @@ const kinds = async (DB, G) => (await DB.prepare(
     fleet.length === 14 && fleet.filter(s => s.ship_class === "frigate").length === 8
       && fleet.filter(s => s.ship_class === "destroyer").length === 4
       && fleet.filter(s => s.ship_class === "colony").length === 2, JSON.stringify(fleet.slice(0, 3)));
+  const hullLooks = (await DB.prepare("SELECT DISTINCT icon_variant FROM game_ships WHERE owner_faction_id = ?").bind(invasionFactionId(G)).all()).results;
+  check("every invader hull wears the same premium look, not the default sprite",
+    hullLooks.length === 1 && hullLooks[0].icon_variant === invaderLook(G) && PREMIUM_LOOKS.includes(hullLooks[0].icon_variant),
+    JSON.stringify(hullLooks));
   const faction = await DB.prepare("SELECT status, user_id FROM game_factions WHERE id = ?").bind(invasionFactionId(G)).first();
   check("they are a monster-status faction with no seat", faction?.status === "monster" && faction.user_id == null);
   const launched = (await kinds(DB, G)).filter(k => k.kind === "invasion_launched");
@@ -352,6 +361,8 @@ const kinds = async (DB, G) => (await DB.prepare(
   const base = await DB.prepare("SELECT COUNT(*) AS n FROM game_ships WHERE owner_faction_id = ? AND parent_body_id = ? AND ship_class = 'frigate' AND status = 'active' AND built_at_tick > ?")
     .bind(invasionFactionId(G), held, sieged.t).first();
   check("...at the world they hold", base.n === 2, `${base.n}`);
+  const lateLooks = (await DB.prepare("SELECT DISTINCT icon_variant FROM game_ships WHERE owner_faction_id = ?").bind(invasionFactionId(G)).all()).results;
+  check("reinforcements raised later wear the same look", lateLooks.length === 1 && lateLooks[0].icon_variant === invaderLook(G), JSON.stringify(lateLooks));
 
   // The counterplay: capture their gate (a capture changes the BODY's owner) and the ships stop.
   await DB.prepare("UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?").bind(fA.id, invasionGateId(G)).run();
