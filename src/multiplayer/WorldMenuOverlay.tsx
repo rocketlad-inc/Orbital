@@ -3183,7 +3183,7 @@ const WmFleet: React.FC<{
                 disabled={h.disabled}
                 title={h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy}
                 onClick={() => buildShip(cls)}
-                data-testid={`wm-ship-${cls}`}
+                data-testid={`wm-ship-${cls}`} data-tutorial-id={cls === 'corvette' ? 'wm-build-corvette' : undefined}
               >{t('worldmenu.build')}</button>
             </div>
           );
@@ -3253,7 +3253,7 @@ const WmFleet: React.FC<{
                 disabled={h.disabled}
                 title={h.lock ?? (h.noYard ? t('worldmenu.buildYardFirst') : h.priceWhy)}
                 onClick={() => buildShip(cls)}
-                data-testid={`wm-ship-${cls}`}
+                data-testid={`wm-ship-${cls}`} data-tutorial-id={cls === 'corvette' ? 'wm-build-corvette' : undefined}
               >{t('worldmenu.build')}</button>
             </div>
           );

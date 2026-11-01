@@ -588,7 +588,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                         }, 1800);
                       }
                     }}
-                    disabled={inFlight.has(id)}
+                    disabled={inFlight.has(id)} data-tutorial-avoid=""
                     title={instant
                       ? (isActive
                           ? t('econ.tech.completeTip', { name: def.name })
@@ -616,7 +616,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     title={isActive
                       ? t('econ.tech.queueAnotherTip', { name: def.name })
                       : t('econ.tech.queueAfterTip', { name: def.name })}
-                    style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }}
+                    style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }} data-tutorial-avoid=""
                   >+ {t('econ.tech.queueBtn')}{queueCount > 0 ? ` \u00d7${queueCount}` : ''}</button>
                   {/* The card has no position of its own, so its −
                       trims the LAST copy of this tech: the stack
