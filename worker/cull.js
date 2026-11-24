@@ -98,7 +98,7 @@ export async function findIdleGames(env, nowMs, opts = {}) {
        LEFT JOIN analytics_game_seen s ON s.game_id = g.id
       WHERE g.status = 'active'
         AND ${noCull} = 0
-        AND COALESCE(g.is_test_game, 0) = 0
+        ${env.ORBITAL_ENV === 'staging' ? '' : 'AND COALESCE(g.is_test_game, 0) = 0'}
         AND g.id NOT IN (${never})
         AND MAX(COALESCE(s.last_action_ms, 0), COALESCE(g.started_at, g.created_at, 0)) < ?
         AND NOT EXISTS (SELECT 1 FROM analytics_events e JOIN users u ON u.id = e.user_id
@@ -308,7 +308,7 @@ let handledSlot = 0;
  * Hourly sweep, called from the minute cron. Never throws.
  *
  *   opts.dryRun   decide and report, write NOTHING (no claim, no log).
- *   opts.force    ignore the staging skip and the hourly claim (tests, the
+ *   opts.force    ignore the hourly claim (tests, the
  *                 operator); the kill switch still applies unless dryRun.
  *   opts.maxGames / opts.maxLobbies   per-run caps.
  */
@@ -323,8 +323,10 @@ export async function sweepIdle(env, nowMs = Date.now(), opts = {}) {
       ]);
       return { dryRun: true, enabled: await cullEnabled(env), cutoffMs: nowMs - CULL_AFTER_MS, games, lobbies };
     }
+    // Staging culls too (Lorne, 2026-11-24): its idle test games ticked for
+    // months and ran up a $471 D1 read bill. There, Studio/test games are
+    // culled as well; mark a keeper with games.no_cull = 1.
     if (!opts.force) {
-      if (env.ORBITAL_ENV === 'staging') return { ran: false, reason: 'staging' };
       const slot = Math.floor(nowMs / HOUR_MS) * HOUR_MS;
       if (slot === handledSlot) return { ran: false, reason: 'handled' };
     }

@@ -298,9 +298,14 @@ console.log('\n-- dry run');
 // ============================================================================
 console.log('\n-- staging, kill switch');
 {
-  const st = await cull.sweepIdle({ ...env, ORBITAL_ENV: 'staging' }, NOW);
-  check('staging skips entirely', st.ran === false && st.reason === 'staging', st);
-  check('...and touched nothing', (await statusOf('G15')).status === 'active' && (await count('cull_runs')) === 0);
+  // Staging culls too (2026-11-24), and there an idle test game is culled as well.
+  const stage = { ...env, ORBITAL_ENV: 'staging' };
+  const sd = await cull.sweepIdle(stage, NOW, { dryRun: true });
+  const pd = await cull.sweepIdle(env, NOW, { dryRun: true });
+  check('staging dry run includes the idle test game', sd.games.some(g => g.id === 'GTEST'), sd.games.map(g => g.id));
+  check('...prod still skips it', !pd.games.some(g => g.id === 'GTEST'), pd.games.map(g => g.id));
+  check('...and staging still spares no_cull', !sd.games.some(g => g.id === 'GNOCULL'));
+  check('...the dry run touched nothing', (await statusOf('G15')).status === 'active' && (await count('cull_runs')) === 0);
 
   await ins('bot_settings', { key: 'cull_enabled', value: 'false', updated_ms: NOW });
   cull._resetCullSlot();
