@@ -113,6 +113,11 @@ const TECH_CAP = 10;
  *  RICH_AT metal (credits weighed 8:1), at most MAX_EXTRA_ORDERS. */
 const RICH_AT = 2000;
 const MAX_EXTRA_ORDERS = 4;
+/** Most orders it keeps WAITING at its yard. A full yard does not refuse an
+ *  order, it queues it: with no cap a rich empire queued 5 every few ticks
+ *  and prod games reached 22,000 waiting orders that every tick re-read
+ *  (the Nov 2026 D1 bill). Two keep the yard fed, so it builds as fast. */
+const MAX_WAITING_ORDERS = 2;
 /** How often an empire plays, in real time: at most one turn per this
  *  many ms (a 30 s tick: every tick; a 7 s tick: every third). The
  *  crucible ran six empires every 7 s tick and their /state reads held
@@ -313,7 +318,14 @@ export async function takeTurn(env, g, fac, difficulty, { trial = false } = {}) 
   // time). It stops at the first refusal (a full yard, an empty purse).
   if (home && doctrine.build.length && due(tick, last, doctrine.buildEvery)) {
     const wealth = Math.min(Number(purse?.metal ?? 0), Number(purse?.gold ?? 0) * 8);
-    const orders = 1 + Math.min(MAX_EXTRA_ORDERS, Math.floor(Math.log2(Math.max(1, wealth / RICH_AT))));
+    const backlog = Number((await DB.prepare(
+      `SELECT COUNT(*) AS c FROM game_body_build_queue
+        WHERE game_id = ? AND status = 'waiting' AND body_id = ? AND faction_id = ? AND cancelled_at_tick IS NULL`,
+    ).bind(gameId, home, me).first())?.c ?? 0);
+    const orders = Math.min(
+      1 + Math.min(MAX_EXTRA_ORDERS, Math.floor(Math.log2(Math.max(1, wealth / RICH_AT)))),
+      Math.max(0, MAX_WAITING_ORDERS - backlog),
+    );
     const n = Math.floor(tick / doctrine.buildEvery);
     // Named from the ordinary pool, as a person's BUILD names a hull.
     const taken = await takenShipNames(env, gameId);

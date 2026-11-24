@@ -329,6 +329,11 @@ const standing = (await DB.prepare(`SELECT f.ai_personality AS p, f.status,
     (SELECT COUNT(*) FROM game_ships s WHERE s.owner_faction_id = f.id AND s.hp > 0) AS ships
   FROM game_factions f WHERE f.game_id = ? ORDER BY f.slot`).bind(GC).all()).results;
 console.log('        crucible standings:', JSON.stringify(standing));
+// A full yard queues orders instead of refusing them: an uncapped rich empire
+// piled up 22,000 waiting orders that every tick re-read (Nov 2026 D1 bill).
+const backlogC = await DB.prepare(`SELECT MAX(n) AS worst FROM (SELECT COUNT(*) AS n FROM game_body_build_queue
+    WHERE game_id = ? AND status = 'waiting' AND cancelled_at_tick IS NULL GROUP BY faction_id, body_id)`).bind(GC).first();
+check('crucible: no empire keeps more than 2 orders waiting at a yard', Number(backlogC?.worst ?? 0) <= 2, `worst ${backlogC?.worst}`);
 const ms = await DB.prepare('SELECT AVG(ms) AS avg, MAX(ms) AS max FROM ai_turn_log WHERE game_id = ?').bind(GC).first();
 console.log(`        crucible turn time: avg ${Math.round(ms.avg)} ms, max ${ms.max} ms (in-memory DB)`);
 
